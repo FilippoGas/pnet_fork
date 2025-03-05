@@ -13,7 +13,7 @@ class ReactomeNetwork:
         self.hierarchy = self.load_hierarchy()
         self.graph = self.generate_graph()
         self.drop_pathways(pathways_to_drop)
-        self.reg_relations= pd.read_csv('../data/regulatory/collectri_filtered.csv')
+        self.reg_relations= pd.read_csv(os.path.dirname(__file__)+'/../../data/regulatory/collectri_filtered.csv')
 
         # Store metadata and prepare for mask extraction
         self.max_level = min(self.get_number_of_layers(), max_depth)
@@ -33,7 +33,7 @@ class ReactomeNetwork:
         for genes in the dataset which have no connection to Reactome.
         :return: DataFrame with columns ['pathway', 'gene'] with binary relations between pathways and genes
         """
-        filename = '../data/reactome/ReactomePathways.gmt'
+        filename = os.path.dirname(__file__)+'/../../data/reactome/ReactomePathways.gmt'
         genes_start_col = 2
         pathway_col = 1
         pathway2genes_list = []
@@ -61,7 +61,7 @@ class ReactomeNetwork:
         :param species: string of species to filter pathways for, default is HSA for human pathways
         :return: DataFrame with columns ['ID','pathway','species']
         """
-        filename = '../data/reactome/ReactomePathways.txt'
+        filename = os.path.dirname(__file__)+'/../../data/reactome/ReactomePathways.txt'
         df = pd.read_csv(filename, sep="\t")
         df.columns = ["ID", "pathway", "species"]
         df = df[df["ID"].str.contains(species)]
@@ -76,7 +76,7 @@ class ReactomeNetwork:
         :param species: string of species to filter for, default is HSA for human
         :return: DataFrame with columns ['source','target'] for each parent-child relation in Reactome
         """
-        filename = '../data/reactome/ReactomePathwaysRelation.txt'
+        filename = os.path.dirname(__file__)+'/../../data/reactome/ReactomePathwaysRelation.txt'
         df = pd.read_csv(filename, sep="\t")
         df.columns = ["source", "target"]
         df = df[df["target"].str.contains(species)]

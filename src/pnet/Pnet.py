@@ -464,7 +464,7 @@ def evaluate_interpret_save(model, test_dataset, path):
 
 
 
-def run(genetic_data, target, save_path='../results/model', gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
+def run(genetic_data, target, save_path=os.path.dirname(__file__)+'/../../results/model', gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
