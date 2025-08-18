@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(__file__)+"/../src/")
 
 from pnet import pnet_loader, Pnet
 from util import util, sankey_diag
- 
+import pickle
 import torch
 import seaborn as sns
 import pandas as pd
@@ -22,6 +22,7 @@ warnings.filterwarnings('ignore')
 
 datapath = '/home/filippo.gastaldello/data/notebook_example_data/'
 fig_output = '/home/filippo.gastaldello/data/pnet-fork/SKCM_purity/plots/'
+output_root = '/home/filippo.gastaldello/data/pnet-fork/SKCM_purity/'
 
 # LOAD INPUT
 
@@ -78,6 +79,20 @@ df['y_pred'] = y_pred
 sns.regplot(data = df, x = 'y_test', y = 'y_pred', color='#41B6E6')
 correlation_coefficient = round(df['y_test'].corr(df['y_pred']), 2)
 plt.text(0.95, 0.05, f'Correlation: {correlation_coefficient}', ha = 'right', va = 'center', transform = plt.gca().transAxes)
-plt.plot(y_test, y_pred, color = '#FFA300', linestyle = '--', label = 'Diagonal Line')
+plt.plot(y_test, y_test, color = '#FFA300', linestyle = '--', label = 'Diagonal Line')
 sns.despine()
 plt.savefig(fname = fig_output+"test_pred_corr.pdf", format='pdf', dpi = 500)
+
+# For a quick look at the importance scores we can run model.interpret with the test dataset.test_dataset.
+# We recommend however, to use multiple runs of cross validation before inspecting feature and pathways 
+# importance, since individual runs can drastically differ and only stable features across runs can be
+# considered important.
+gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores = model.interpret(test_dataset)
+layer_list = [gene_feature_importances, additional_feature_importances, gene_importances] + layer_importance_scores
+layer_list_names = ['gene_feature', 'additional_feature', 'gene'] + [f'layer_{i}' for i in range(5)]
+layer_list_dict = dict(zip(layer_list_names, layer_list))
+
+
+# To visualize feature importances, one can generate a Sankey Diagram acros all layers of the model:
+sk = sankey_diag.SankeyDiag(layer_list_dict, runs = 1)
+fig = sk.get_sankey_diag(fig_output+"importance.hmtl")

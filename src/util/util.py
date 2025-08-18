@@ -40,6 +40,18 @@ MUTATIONS_DICT = {"3'Flank": 'Silent',
                   'Start_Codon_Ins': 'LOF'}
 
 
+def load_hap_scores(directory_path):
+    scores_hap1 = pd.read_csv(directory_path + "scores_hap1.csv",
+                              sep=","
+                              ).dropna().set_index("hgnc_symbol").drop(['ensembl_transcript_id'], axis=1).T
+    scores_hap2 = pd.read_csv(directory_path + "scores_hap2.csv",
+                              sep=","
+                              ).dropna().set_index("hgnc_symbol").drop(['ensembl_transcript_id'], axis=1).T
+    tumor_subtype = pd.read_csv(directory_path + "cancer_subtype.csv",
+                                sep=","
+                                ).dropna().set_index("samples")
+    return scores_hap1, scores_hap2, tumor_subtype
+
 def load_tcga_dataset(directory_path, load_mut=False, rna_standardized=True):
     if rna_standardized:
         rna = pd.read_csv(directory_path + '/data_mrna_seq_v2_rsem_zscores_ref_all_samples.txt',
