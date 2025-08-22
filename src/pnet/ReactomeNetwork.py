@@ -2,16 +2,19 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import os
-
+import matplotlib.pyplot as plt
 
 class ReactomeNetwork:
-    def __init__(self, gene_list, trim=0, max_depth=6, pathways_to_drop=[]):
+    def __init__(self, gene_list, transcript_map, trim=0, max_depth=6, pathways_to_drop=[]):
         # Loading connections and setting up graph
+        
         self.gene_list = gene_list
+        self.transcript_list = list(transcript_map.keys())
         self.pathway2genes = self.load_pathway2genes()
         self.pathway_encoding = self.load_pathway_encoding()
         self.hierarchy = self.load_hierarchy()
         self.graph = self.generate_graph()
+
         self.drop_pathways(pathways_to_drop)
         self.reg_relations= pd.read_csv(os.path.dirname(__file__)+'/../../data/regulatory/collectri_filtered.csv')
 
@@ -20,11 +23,28 @@ class ReactomeNetwork:
         self.nodes_per_level = self.get_nodes_at_levels()
 
         # Generate layers of Graph as Adjacency matrices
+        self.transcript_layers = self.build_transcript_to_gene_adjacency(transcript_map)
         self.gene_layers, self.pathway_layers = self.get_layers(trim)
-        # Remove gene inputs which flow into children pathways as well
+        # Remove gene inputs which flow into children pathways as well 
         for layer in reversed(self.gene_layers[1:]):
+
+            # DEBUG
+            layer.to_csv("/home/filippo.gastaldello/data/pnet-fork/breast_subtype_prediction/layer.csv")
+
             for pathway in layer.columns:
                 self.clean_redundant_gene_input(pathway)
+
+    def build_transcript_to_gene_adjacency(self, transcript_map):
+        """
+        Build an adjacency matrix to describe associations between transcripts and genes
+        """
+        df = pd.DataFrame(0, index=self.transcript_list, columns=self.gene_list)
+        df.update(pd.DataFrame.from_dict(
+                    {t: {g: 1} for t, g in transcript_map.items()},
+                    orient='index'
+                    )
+                )
+        return df
 
     def load_pathway2genes(self):
         """
@@ -130,6 +150,7 @@ class ReactomeNetwork:
         """
         p_adjacency = self.pathway_layers[level - 1]
         g_adjacency = self.gene_layers[level - 1]
+
         children = list(p_adjacency[p_adjacency[pathway] == 1].index)
         return list(g_adjacency[g_adjacency[children].sum(axis=1) > 0].index)
 
@@ -143,7 +164,7 @@ class ReactomeNetwork:
         """
         level = self.get_pathway_level(pathway)
         children_genes = self.get_children_gene_inputs(level, pathway)
-        self.gene_layers[level][pathway][children_genes] = 0
+        self.gene_layers[level].loc[pathway, children_genes] = 0
 
     def get_nodes_at_levels(self):
         """
@@ -184,7 +205,7 @@ class ReactomeNetwork:
         adjacency matrix connects genes directly to higher level pathways.
         :param trim: int; number of minimum inflows to a node to keep the node in the network.
         :param depth: int: number of pathway levels to be considered for the network.
-        :return: (list(pd.DataFrame), list(pd.DataFrame)); a list of adjacency matrices per layer and a list of
+        :return: list(pd.DataFrame), list(pd.DataFrame)); a list of adjacency matrices per layer and a list of
             gene-to-pathway adjacency matrix per layer.
         """
         gene_layers = []
@@ -201,13 +222,13 @@ class ReactomeNetwork:
                         # Add connections only if there are sufficient inflows
                         # Add genes to pathways connections to adjacency of layer
                         genes_in_pathway = self.pathway2genes[self.pathway2genes['pathway'] == pathway]['gene']
-                        gene_connections[pathway][genes_in_pathway] = 1
+                        gene_connections.loc[pathway, genes_in_pathway] = 1
 
                         # Add pathway to pathways connections to adjacency of layer
                         pathways_in_pathway = [n[0] for n in self.graph.in_edges(pathway)]
                         pathways_in_pathway = list(set(pathways_in_pathway).intersection(higher_level_pathway_nodes))
                         for p in pathways_in_pathway:
-                            pathway_connections[p][pathway] = 1
+                            pathway_connections.loc[p, pathway] = 1
 
                 gene_layers.append(gene_connections)
                 pathway_layers.append(pathway_connections)
@@ -228,7 +249,7 @@ class ReactomeNetwork:
         return extra_mask
     
 
-    def get_masks(self, nbr_genetic_input_types, regulatory=False):
+    def get_masks(self, nbr_genetic_input_types, regulatory=False, with_transcript=False):
         """
         Transforms pd.DataFrame adjacency matrices into binary np.array masks. Input layer connections based on the
          number of genetic inputs.
@@ -237,13 +258,17 @@ class ReactomeNetwork:
             gene-to-pathway adjacency matrix per layer. The input mask to connect the same gene from different
              modalities to the input node
         """
-        input_mask = pd.DataFrame(index=nbr_genetic_input_types*self.gene_list, columns=self.gene_list).fillna(0)
+        input_mask = pd.DataFrame(index=nbr_genetic_input_types*self.transcript_list, columns=self.transcript_list).fillna(0)
         for col in input_mask.columns:
             input_mask[col].loc[col] = 1
+        if with_transcript:
+            transcript_mask = [l.values for l in self.transcript_layers]
+        else:
+            transcript_mask = []
         gene_masks = [l.values for l in self.gene_layers]
         pathway_masks = [l.values for l in self.pathway_layers]
         if regulatory:
             reg_mask = self.get_reg_mask()
-            return gene_masks, pathway_masks, input_mask.values, reg_mask.values
+            return gene_masks, pathway_masks, input_mask.values, transcript_mask, reg_mask.values
         else:
-            return gene_masks, pathway_masks, input_mask.values
+            return gene_masks, pathway_masks, input_mask.values, transcript_mask
