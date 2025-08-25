@@ -28,9 +28,6 @@ class ReactomeNetwork:
         # Remove gene inputs which flow into children pathways as well 
         for layer in reversed(self.gene_layers[1:]):
 
-            # DEBUG
-            layer.to_csv("/home/filippo.gastaldello/data/pnet-fork/breast_subtype_prediction/layer.csv")
-
             for pathway in layer.columns:
                 self.clean_redundant_gene_input(pathway)
 
@@ -222,13 +219,13 @@ class ReactomeNetwork:
                         # Add connections only if there are sufficient inflows
                         # Add genes to pathways connections to adjacency of layer
                         genes_in_pathway = self.pathway2genes[self.pathway2genes['pathway'] == pathway]['gene']
-                        gene_connections.loc[pathway, genes_in_pathway] = 1
+                        gene_connections.loc[genes_in_pathway, pathway] = 1
 
                         # Add pathway to pathways connections to adjacency of layer
                         pathways_in_pathway = [n[0] for n in self.graph.in_edges(pathway)]
                         pathways_in_pathway = list(set(pathways_in_pathway).intersection(higher_level_pathway_nodes))
                         for p in pathways_in_pathway:
-                            pathway_connections.loc[p, pathway] = 1
+                            pathway_connections.loc[pathway, p] = 1
 
                 gene_layers.append(gene_connections)
                 pathway_layers.append(pathway_connections)
