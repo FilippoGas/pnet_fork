@@ -20,9 +20,9 @@ class CustomizedLinear(nn.Module):
         self.input_features, self.output_features = mask.shape
         # Transpose mask to account for multiplication with weights
         if isinstance(mask, torch.Tensor):
-            self.mask = mask.type(torch.float).t()
+            self.mask = mask.type(torch.uint8).t()
         else:
-            self.mask = torch.tensor(mask, dtype=torch.float16).t().to_sparse()
+            self.mask = torch.tensor(mask, dtype=torch.uint8).t()
         # Mask should not be updated, remove gradient
         # self.mask = nn.Parameter(self.mask, requires_grad=False) #TODO: confirm this is not needed
         self.weight = nn.Parameter(torch.empty(self.output_features, self.input_features, dtype=torch.float16))

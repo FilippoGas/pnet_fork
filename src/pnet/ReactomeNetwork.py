@@ -37,11 +37,9 @@ class ReactomeNetwork:
         Build an adjacency matrix to describe associations between transcripts and genes
         """
         df = pd.DataFrame(0, index=self.transcript_list, columns=self.gene_list)
-        df.update(pd.DataFrame.from_dict(
-                    {t: {g: 1} for t, g in transcript_map.items()},
-                    orient='index'
-                    )
-                )
+        for t, g in transcript_map.items():
+            if t in df.index and g in df.columns:
+                df.at[t, g] = 1
         return df
 
     def load_pathway2genes(self):
@@ -213,8 +211,8 @@ class ReactomeNetwork:
             higher_level_pathway_nodes = self.nodes_per_level[level-1]
             if pathway_nodes:       # Only add layers if there is nodes in layer
                 # Generate empty adjacency matrices for each layer
-                gene_connections = pd.DataFrame(index=self.gene_list, columns=pathway_nodes).fillna(0)
-                pathway_connections = pd.DataFrame(index=pathway_nodes, columns=higher_level_pathway_nodes).fillna(0)
+                gene_connections = pd.DataFrame(0, index=self.gene_list, columns=pathway_nodes)
+                pathway_connections = pd.DataFrame(0, index=pathway_nodes, columns=higher_level_pathway_nodes)
                 for pathway in pathway_nodes:
                     if self.get_number_of_inputs(pathway) > trim:
                         # Add connections only if there are sufficient inflows
