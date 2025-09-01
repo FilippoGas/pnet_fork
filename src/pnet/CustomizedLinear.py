@@ -22,10 +22,10 @@ class CustomizedLinear(nn.Module):
         if isinstance(mask, torch.Tensor):
             self.mask = mask.type(torch.float).t()
         else:
-            self.mask = torch.tensor(mask, dtype=torch.float).t()
+            self.mask = torch.tensor(mask, dtype=torch.float16).t().to_sparse()
         # Mask should not be updated, remove gradient
-        self.mask = nn.Parameter(self.mask, requires_grad=False)
-        self.weight = nn.Parameter(torch.Tensor(self.output_features, self.input_features))
+        # self.mask = nn.Parameter(self.mask, requires_grad=False) #TODO: confirm this is not needed
+        self.weight = nn.Parameter(torch.empty(self.output_features, self.input_features, dtype=torch.float16))
 
         if bias:
             self.bias = nn.Parameter(torch.Tensor(self.output_features))
