@@ -57,7 +57,7 @@ class Regulatory_Block(nn.Module):
 
 
 class PNET_NN(pl.LightningModule):
-    def __init__(self, reactome_network, task,with_transcript=False, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3, weight_decay=1e-5,
+    def __init__(self, reactome_network, task,with_transcript, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3, weight_decay=1e-5,
                  dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None, random_network=False, fcnn=False,
                  loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False):
         super().__init__()
@@ -482,7 +482,7 @@ def evaluate_interpret_save(model, test_dataset, path):
 
 
 
-def run(genetic_data, target, with_transcript=False,transcript_gene_map=None, save_path=os.path.dirname(__file__)+'/../../results/model', gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
+def run(genetic_data, target, with_transcript,transcript_gene_map=None, save_path=os.path.dirname(__file__)+'/../../results/model', gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
@@ -500,7 +500,7 @@ def run(genetic_data, target, with_transcript=False,transcript_gene_map=None, sa
         reactome_network = ReactomeNetwork.ReactomeNetwork(genes, pathways_to_drop=drop_pathways)
     
 
-    model = PNET_NN(reactome_network=reactome_network, task=task, with_transcript=False, nbr_gene_inputs=len(genetic_data), dropout=dropout,
+    model = PNET_NN(reactome_network=reactome_network, task=task, with_transcript=with_transcript, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
                     input_dropout=input_dropout, aux_loss_weights=aux_loss_weights

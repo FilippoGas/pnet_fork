@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
+import scipy.sparse as sp
 
 class ReactomeNetwork:
     def __init__(self, gene_list, transcript_map, trim=0, max_depth=6, pathways_to_drop=[]):
@@ -246,7 +247,7 @@ class ReactomeNetwork:
         return extra_mask
     
 
-    def get_masks(self, nbr_genetic_input_types, regulatory=False, with_transcript=False):
+    def get_masks(self, nbr_genetic_input_types, with_transcript, regulatory=False):
         """
         Transforms pd.DataFrame adjacency matrices into binary np.array masks. Input layer connections based on the
          number of genetic inputs.
@@ -255,11 +256,21 @@ class ReactomeNetwork:
             gene-to-pathway adjacency matrix per layer. The input mask to connect the same gene from different
              modalities to the input node
         """
-        input_mask = pd.DataFrame(index=nbr_genetic_input_types*self.transcript_list, columns=self.transcript_list).fillna(0)
-        for col in input_mask.columns:
-            input_mask[col].loc[col] = 1
+
+        # Create sparse matrix for memory efficiency wrapped in pd.DataFrame for easier handling
+        n = len(self.transcript_list)
+        
+        rows = np.arange(2*n)
+        cols = np.tile(np.arange(n), 2)
+        data = np.ones(2*n, dtype=np.int8)
+
+        mask = sp.coo_matrix((data, (rows, cols)), shape=(2*n,n))
+        input_mask = pd.DataFrame.sparse.from_spmatrix(mask,
+                                                       index = nbr_genetic_input_types*self.transcript_list,
+                                                       columns = self.transcript_list)
+
         if with_transcript:
-            transcript_mask = [l.values for l in self.transcript_layers]
+            transcript_mask = self.transcript_layers.values
         else:
             transcript_mask = []
         gene_masks = [l.values for l in self.gene_layers]
