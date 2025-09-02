@@ -429,6 +429,7 @@ def train(model, train_loader, test_loader, save_path, lr=0.5e-3, weight_decay=1
         device = torch.device('mps')
     else:
         device = torch.device('cpu')
+    print(f"Model size: {get_model_size(model):.2f} MB")
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = StepLR(optimizer, step_size=30, gamma=lr)
@@ -621,3 +622,13 @@ def visualize_importances(feature_names, importances, title="Average Feature Imp
         plt.xticks(x_pos, feature_names, rotation=90)
         plt.xlabel(axis_title)
         plt.title(title)
+
+def get_model_size(model):
+    param_size = 0
+    buffer_size = 0
+    for param in model.parameters():
+        param_size += param.nelement() * param.element_size()
+    for buffer in model.buffers():
+        buffer_size += buffer.nelement() * buffer.element_size()
+    size_all_gb = (param_size + buffer_size) / 1024**3
+    return size_all_gb
