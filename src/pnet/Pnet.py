@@ -429,7 +429,7 @@ def train(model, train_loader, test_loader, save_path, lr=0.5e-3, weight_decay=1
         device = torch.device('mps')
     else:
         device = torch.device('cpu')
-    print(f"Model size: {get_model_size(model):.2f} MB")
+    print(f"Model size: {get_model_size(model):.2f} GB")
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = StepLR(optimizer, step_size=30, gamma=lr)
@@ -506,6 +506,7 @@ def run(genetic_data, target, with_transcript,transcript_gene_map=None, save_pat
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
                     input_dropout=input_dropout, aux_loss_weights=aux_loss_weights
                     )
+    print(f'batch size P{batch_size}')
     train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
                                              early_stopping)

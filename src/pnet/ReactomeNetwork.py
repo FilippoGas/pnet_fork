@@ -262,17 +262,16 @@ class ReactomeNetwork:
         cols = np.tile(np.arange(n), 2)
         data = np.ones(2*n, dtype=np.int8)
 
-        mask = sp.coo_matrix((data, (rows, cols)), shape=(2*n,n))
+        mask = sp.coo_matrix((data, (rows, cols)), shape=(2*n,n), dtype=np.int8)
         input_mask = pd.DataFrame.sparse.from_spmatrix(mask,
                                                        index = nbr_genetic_input_types*self.transcript_list,
                                                        columns = self.transcript_list)
-
         if with_transcript:
             transcript_mask = self.transcript_layers.values
         else:
             transcript_mask = []
-        gene_masks = [l.values for l in self.gene_layers]
-        pathway_masks = [l.values for l in self.pathway_layers]
+        gene_masks = [pd.arrays.SparseArray(l.fillna(0).astype(np.int8).values.ravel()) for l in self.gene_layers]
+        pathway_masks = [pd.arrays.SparseArray(l.fillna(0).astype(np.int8).values.ravel()) for l in self.pathway_layers]
         if regulatory:
             reg_mask = self.get_reg_mask()
             return gene_masks, pathway_masks, input_mask.values, transcript_mask, reg_mask.values
