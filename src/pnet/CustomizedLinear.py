@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import math
+import numpy as np
 
 
 class CustomizedLinear(nn.Module):
@@ -22,10 +23,29 @@ class CustomizedLinear(nn.Module):
         if isinstance(mask, torch.Tensor):
             self.mask = mask.type(torch.uint8).t()
         else:
-            self.mask = torch.tensor(mask, dtype=torch.uint8).t()
+            # Convert to SciPy sparse matrix
+            sp_sparse_mask = mask.sparse.to_coo().astype(np.int8)
+            # Extract cols rows and values
+            rows = torch.from_numpy(sp_sparse_mask.row.astype(np.int64))
+            cols = torch.from_numpy(sp_sparse_mask.col.astype(np.int64))
+            values = torch.from_numpy(sp_sparse_mask.data.astype(np.int8))
+            # uild sparse tensor
+            self.mask = torch.sparse_coo_tensor(indices = torch.vstack([rows, cols]),
+                                                values = values,
+                                                size = sp_sparse_mask.shape,
+                                                dtype = torch.int8).t()
         # Mask should not be updated, remove gradient
-        # self.mask = nn.Parameter(self.mask, requires_grad=False) #TODO: confirm this is not needed
-        self.weight = nn.Parameter(torch.empty(self.output_features, self.input_features, dtype=torch.float16))
+        self.mask = nn.Parameter(self.mask, requires_grad=False)
+
+        # Do the same for weights, initialize a sparse tensor with the same 
+        # sparsification pattern as the mask and later initialize the values
+        weight_values = torch.empty(values.shape, dtype=torch.float32)  # uninitialized
+        self.weight = torch.sparse_coo_tensor(
+            indices=torch.vstack([rows, cols]), 
+            values=weight_values, 
+            size=sp_sparse_mask.shape, 
+            dtype=torch.float16
+        ).t()
 
         if bias:
             self.bias = nn.Parameter(torch.Tensor(self.output_features))

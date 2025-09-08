@@ -40,7 +40,8 @@ class ReactomeNetwork:
         for t, g in transcript_map.items():
             if t in df.index and g in df.columns:
                 df.at[t, g] = 1
-        return df
+        # Return sparse df
+        return df.astype(np.int8).astype(pd.SparseDtype("int8", fill_value=0))
 
     def load_pathway2genes(self):
         """
@@ -267,13 +268,13 @@ class ReactomeNetwork:
                                                        index = nbr_genetic_input_types*self.transcript_list,
                                                        columns = self.transcript_list)
         if with_transcript:
-            transcript_mask = self.transcript_layers.values
+            transcript_mask = self.transcript_layers
         else:
             transcript_mask = []
         gene_masks = [pd.arrays.SparseArray(l.fillna(0).astype(np.int8).values.ravel()) for l in self.gene_layers]
         pathway_masks = [pd.arrays.SparseArray(l.fillna(0).astype(np.int8).values.ravel()) for l in self.pathway_layers]
         if regulatory:
             reg_mask = self.get_reg_mask()
-            return gene_masks, pathway_masks, input_mask.values, transcript_mask, reg_mask.values
+            return gene_masks, pathway_masks, input_mask, transcript_mask, reg_mask.values
         else:
-            return gene_masks, pathway_masks, input_mask.values, transcript_mask
+            return gene_masks, pathway_masks, input_mask, transcript_mask

@@ -2,17 +2,14 @@ import sys
 import os
 sys.path.append(os.path.dirname(__file__)+"/../src/")
 
-from pnet import pnet_loader, Pnet
-from util import util, sankey_diag 
+from pnet import Pnet
+from util import util
 
-import torch
-import seaborn as sns
+
 import pandas as pd
-from sklearn import metrics
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score
 from random import sample
-import scipy
 
 # Transcript-gene map
 transcript_map_dir = "/home/filippo.gastaldello/resources/pnet/transcript_gene_map.json"
