@@ -307,7 +307,6 @@ def get_loss_function(task):
     print('Loss function used: {}'.format(loss_function))
     return loss_function
 
-
 class EarlyStopper:
     def __init__(self, save_path, patience=1, min_delta=0, verbose=False):
         self.patience = patience

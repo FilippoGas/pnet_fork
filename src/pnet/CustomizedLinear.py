@@ -38,14 +38,8 @@ class CustomizedLinear(nn.Module):
         self.mask = nn.Parameter(self.mask, requires_grad=False)
 
         # Do the same for weights, initialize a sparse tensor with the same 
-        # sparsification pattern as the mask and later initialize the values
-        weight_values = torch.empty(values.shape, dtype=torch.float32)  # uninitialized
-        self.weight = torch.sparse_coo_tensor(
-            indices=torch.vstack([rows, cols]), 
-            values=weight_values, 
-            size=sp_sparse_mask.shape, 
-            dtype=torch.float16
-        ).t()
+        # sparsification pattern as the mask and initialize the values
+        self.weight = nn.parameter(initialize_sparse_weights(self.mask, nn.init.kaiming_uniform_, math.sqrt(5)))
 
         if bias:
             self.bias = nn.Parameter(torch.Tensor(self.output_features))
@@ -53,7 +47,6 @@ class CustomizedLinear(nn.Module):
             self.register_parameter('bias', None)
 
         # Initialization of parameters
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))  # weight init
         fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
         bound = 1 / math.sqrt(fan_in)
         nn.init.uniform_(self.bias, -bound, bound)  # bias init
@@ -162,3 +155,22 @@ def masked_activation(mask, pos_weights=False, activation=None, batchnorm=False,
         module.append(nn.Dropout(dropout))
 
     return module
+
+def initialize_sparse_weights(mask, init_fn, fn_param):
+    '''Given a sparse mask, create a sparse weights tensor with the same structure
+    and initialize it with the given init_fn'''
+
+    # Copy mask structure
+    indices = mask._indices()
+    longer_dim = mask.shape[1]/2
+    shape = mask.shape
+    values = torch.empty((2, longer_dim), dtype=torch.float32) # weight vector need to become matrix for initialization. after that flatten again
+    
+    # Initialize weights
+    init_fn(values, fn_param)
+
+
+    # Build sparse tensor
+    weights = torch.sparse_coo_tensor(indices, values, size=shape, dtype=torch.float32)
+    
+    return weights
