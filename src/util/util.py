@@ -86,10 +86,10 @@ def load_tcga_dataset(directory_path, load_mut=False, rna_standardized=True):
         return rna[genes], cna[genes], tumor_type
 
 
-def draw_auc(fpr, tpr, auc_score, draw, save=False):
+def draw_auc(fpr, tpr, auc_score,target_name, draw, save=False):
     if isinstance(fpr, list):
         fpr, tpr = fpr[draw], tpr[draw]
-    plt.plot(fpr, tpr, color="darkorange", label="ROC curve (area = %0.2f)" % auc_score)
+    plt.plot(fpr, tpr, color="darkorange", label= target_name+" (area = %0.2f)" % auc_score)
     plt.ylabel('True Positive Rate')
     plt.xlabel('False Positive Rate')
     plt.plot([0, 1], [0, 1], color="navy", linestyle="--")
@@ -118,10 +118,10 @@ def draw_loss(train_scores, test_scores, save=False):
         plt.show()
 
 
-def get_auc(pred_proba, target, draw=0, save=False):
+def get_auc(pred_proba, target, target_names, draw=0, save=False):
     target=target.to(torch.int)
     if len(target.shape) > 1 and target.shape[1] > 1:
-        auc_score = multiclass_auc(pred_proba, target, save)
+        auc_score = multiclass_auc(pred_proba, target, target_names, save)
     else:
         collapsed_target = target.int()
         auroc = torchmetrics.AUROC(task='binary')
@@ -154,10 +154,8 @@ def get_f1(pred, target):
     return f1_scores
 
 
-def multiclass_auc(pred_proba, target, save=False):
+def multiclass_auc(pred_proba, target, target_names, save=False):
     # Get the predicted class labels from the probabilities
-    predicted_labels = np.argmax(pred_proba, axis=1)
-
     # Calculate the AUC and ROC curves for each class
     num_classes = pred_proba.shape[1]
     auc_scores = []
@@ -178,7 +176,7 @@ def multiclass_auc(pred_proba, target, save=False):
     for i in range(num_classes):
         fpr, tpr = roc_curves[i]
         roc_auc = auc(fpr, tpr)
-        draw_auc(fpr, tpr, roc_auc, draw=0, save=save)
+        draw_auc(fpr, tpr, roc_auc, target_names[i], draw=0, save=save)
     return auc_scores
 
 

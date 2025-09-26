@@ -435,7 +435,7 @@ def train(model, train_loader, test_loader, save_path, lr=0.5e-3, weight_decay=1
     return model, train_scores, test_scores
 
 
-def evaluate_interpret_save(model, test_dataset, path):
+def evaluate_interpret_save(model, test_dataset, target_names,path):
     if not os.path.exists(path):
         os.makedirs(path)
     x_test = test_dataset.x
@@ -445,7 +445,7 @@ def evaluate_interpret_save(model, test_dataset, path):
     if model.task=='BC' or model.task=='MC':
         pred_proba = model.predict_proba(x_test, additional_test).detach()
         pred = model.predict(x_test, additional_test).detach()
-        auc_score = util.get_auc(pred_proba, y_test, save=path+'/auc_curve.pdf')
+        auc_score = util.get_auc(pred_proba, y_test, target_names, save=path+'/auc_curve.pdf')
         auc_prc = util.get_auc_prc(pred_proba, y_test)
         f1_score = util.get_f1(pred, y_test)
         
