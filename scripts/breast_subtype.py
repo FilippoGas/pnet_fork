@@ -1,0 +1,40 @@
+import sys
+import os
+sys.path.append(os.path.dirname(__file__)+"/../src/")
+
+from pnet import Pnet
+from util import util
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score
+from random import sample
+
+# Paths
+agg_func = "sd"
+input_dir = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/breast_subtype/aggregated_scores/"+agg_func+"/"
+cancer_genes_list = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
+tumor_subtypes_path = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/cancer_subtype.csv"
+
+# Load scores and sample data
+scores_hap1, scores_hap2 = util.load_hap_scores(input_dir, agg_func)
+genetic_data = {'scores_hap1':scores_hap1,
+                'scores_hap2':scores_hap2}
+
+# Load tumor subtypes
+tumor_subtypes =  pd.read_csv(tumor_subtypes_path, sep=",").dropna().set_index("samples")
+# Load cancer genes list
+canc_genes = list(pd.read_csv(cancer_genes_list)['hgnc'])
+
+# Split samples in train/test
+samples = scores_hap1.index.tolist()
+train_sample = sample(samples, round(len(samples)*0.7))
+test_sample = list(set(samples)-set(train_sample))
+
+model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(genetic_data, pd.get_dummies(tumor_subtypes), seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
+                                                                           batch_size=64, epochs=300, early_stopping=True, train_inds=train_sample,
+                                                                           test_inds=test_sample, input_dropout=0.5, gene_set=canc_genes)
+
+plt.clf()
+Pnet.evaluate_interpret_save(model, test_dataset, "/home/filippo.gastaldello/data/pnet-fork/breast_subtype_prediction/plot/breast_subtype_prediction")

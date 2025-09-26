@@ -39,6 +39,14 @@ MUTATIONS_DICT = {"3'Flank": 'Silent',
                   'Start_Codon_SNP': 'Other_nonsynonymous',
                   'Start_Codon_Ins': 'LOF'}
 
+def load_hap_scores(directory_path, agg_func):
+    scores_hap1 = pd.read_csv(directory_path + "gene_score_hap1_"+agg_func+".csv",
+                              sep=","
+                              ).dropna().set_index("hgnc_symbol").drop(['ensembl_gene_id'], axis=1).T
+    scores_hap2 = pd.read_csv(directory_path + "gene_score_hap2_"+agg_func+".csv",
+                              sep=","
+                              ).dropna().set_index("hgnc_symbol").drop(['ensembl_gene_id'], axis=1).T
+    return scores_hap1, scores_hap2
 
 def load_tcga_dataset(directory_path, load_mut=False, rna_standardized=True):
     if rna_standardized:
