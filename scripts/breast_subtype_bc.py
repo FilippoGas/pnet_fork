@@ -13,8 +13,8 @@ from sklearn.metrics import roc_auc_score
 from random import sample
 
 
-# agg_func = sys.argv[1]
-# tumor_type = sys.argv[2]
+agg_func = sys.argv[1]
+tumor_type = sys.argv[2]
 
 # Pahts
 input_dir = "/home/filippo.gastaldello/data/pnet_fork/pnet_gene/breast_subtype/aggregated_scores/"+agg_func+"/"
@@ -27,14 +27,14 @@ genetic_data = {'scores_hap1':scores_hap1,
                 'scores_hap2':scores_hap2}
 
 # Load tumor subtypes
-tumor_subtypes =  pd.get_dummies(pd.read_csv(tumor_subtypes_path, sep=",").dropna().set_index("samples"), prefix=None)
+tumor_subtypes =  pd.read_csv(tumor_subtypes_path, sep=",").dropna().set_index("samples")
 
 # Load cancer genes list
 canc_genes = list(pd.read_csv(cancer_genes_list)['hgnc'])
 
 # Split samples in train/test
 samples = scores_hap1.index.tolist()
-train_sample = sample(samples, round(len(samples)*0.7))
+train_sample = sample(samples, round(len(samples)*0.8))
 test_sample = list(set(samples)-set(train_sample))
 
 model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(genetic_data, tumor_subtypes, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
@@ -43,7 +43,7 @@ model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(genetic
 
 # Perform evaluation, generate plots and importances csv and save
 plt.clf()
-gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores = Pnet.evaluate_interpret_save(model, test_dataset, tumor_subtypes.columns.values, "/home/filippo.gastaldello/data/pnet_fork/pnet_gene/breast_subtype/mc/plots/"+agg_func)
+gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores = Pnet.evaluate_interpret_save(model, test_dataset, tumor_subtypes.columns.values, "/home/filippo.gastaldello/data/pnet_fork/pnet_gene/breast_subtype/bc/"+tumor_type+"/plots/"+agg_func)
 
 # Prepare importance dataframes for Sankey diagram
 layer_list = [gene_feature_importances, additional_feature_importances, gene_feature_importances] + layer_importance_scores
@@ -52,4 +52,4 @@ layer_list_dict = dict(zip(layer_list_names, layer_list))
 
 # Plot Sankey
 sk = sankey_diag.SankeyDiag(layer_list_dict, runs=1)
-fig = sk.get_sankey_diag("/home/filippo.gastaldello/data/pnet_fork/pnet_gene/breast_subtype/mc/plots/"+agg_func+"/sankey.html")
+fig = sk.get_sankey_diag("/home/filippo.gastaldello/data/pnet_fork/pnet_gene/breast_subtype/bc/"+tumor_type+"/plots/"+agg_func+"/sankey.html")

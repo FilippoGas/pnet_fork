@@ -435,7 +435,7 @@ def train(model, train_loader, test_loader, save_path, lr=0.5e-3, weight_decay=1
     return model, train_scores, test_scores
 
 
-def evaluate_interpret_save(model, test_dataset, target_names,path):
+def evaluate_interpret_save(model, test_dataset, target_names, path):
     if not os.path.exists(path):
         os.makedirs(path)
     x_test = test_dataset.x

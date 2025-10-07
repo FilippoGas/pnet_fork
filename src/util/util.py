@@ -128,7 +128,7 @@ def get_auc(pred_proba, target, target_names, draw=0, save=False):
         roc = torchmetrics.ROC(task='binary')
         auc_score = auroc(pred_proba, collapsed_target)
         fpr, tpr, tresholds = roc(pred_proba, collapsed_target)
-        draw_auc(fpr, tpr, auc_score, draw, save=save)
+        draw_auc(fpr, tpr, auc_score,target_names, draw=0, save=save)
     return auc_score
 
 
