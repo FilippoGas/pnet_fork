@@ -461,6 +461,8 @@ def evaluate_interpret_save(model, test_dataset, target_names,path):
     gene_importances.to_csv(path+'/gene_importances.csv')
     for i, layer in enumerate(layer_importance_scores):
         layer.to_csv(path+'/layer_{}_importances.csv'.format(i))
+    
+    return gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores
 
 
 

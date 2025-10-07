@@ -86,6 +86,7 @@ class SankeyDiag:
         
     def get_reactome_network_for_imps(self):
         self.genes = self.grouped_imps[self.grouped_imps['Layer']=='gene']['Gene/Pathway'].unique()
+        self.genes = list(dict.fromkeys([x.split("_")[0] for x in self.genes]))
         rn = ReactomeNetwork.ReactomeNetwork(self.genes)
         pathway_encoding = rn.pathway_encoding.set_index('ID')['pathway'].to_dict()
         rn.pathway2genes['pathway'] = rn.pathway2genes['pathway'].apply(lambda x: pathway_encoding[x])
@@ -255,7 +256,7 @@ class SankeyDiag:
 
 
     def get_short_names(self):
-        short_names = pd.read_csv('/mnt/disks/pancan/data/pathways_short_names.csv')
+        short_names = pd.read_csv('/home/filippo.gastaldello/resources/pnet/pathways_short_names.csv')
         short_names['Short name (Eli)'].fillna(short_names['Short name (automatic)'], inplace=True)
         short_names.set_index('Full name', inplace=True)
         short_name_dict = short_names['Short name (Eli)'].to_dict()
