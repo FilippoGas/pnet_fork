@@ -10,7 +10,7 @@ PATHWAY_COLOR = '#00629B'
 RES_COLOR = '#FFA300'
 
 class SankeyDiag:
-    def __init__(self, imps, target=None, runs=1):
+    def __init__(self, imps, path, target=None, runs=1):
         if runs>1:
             self.all_imps = self.load_multiple_runs(imps, runs)
         else:
@@ -30,7 +30,7 @@ class SankeyDiag:
         for i in range(1, 5):
             self.add_pathway_layer_to_sankey(i)
         self.pathway_to_output_layer()
-        self.short_name_dict = self.get_short_names()
+        self.short_name_dict = self.get_short_names(path)
         
         
     def load_multiple_runs(self, results_dir, runs):
@@ -255,8 +255,8 @@ class SankeyDiag:
         self.append_links(self.numerical_encoding['Residual_6'], self.numerical_encoding[target], value, RES_COLOR)
 
 
-    def get_short_names(self):
-        short_names = pd.read_csv('/home/filippo.gastaldello/data/pnet_fork/resources/pathways_short_names.csv')
+    def get_short_names(self, path):
+        short_names = pd.read_csv(path)
         short_names['Short name (Eli)'].fillna(short_names['Short name (automatic)'], inplace=True)
         short_names.set_index('Full name', inplace=True)
         short_name_dict = short_names['Short name (Eli)'].to_dict()
