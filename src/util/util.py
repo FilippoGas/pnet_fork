@@ -39,11 +39,11 @@ MUTATIONS_DICT = {"3'Flank": 'Silent',
                   'Start_Codon_SNP': 'Other_nonsynonymous',
                   'Start_Codon_Ins': 'LOF'}
 
-def load_hap_scores(directory_path, agg_func):
-    scores_hap1 = pd.read_csv(directory_path + "gene_score_hap1_"+agg_func+".csv",
+def load_hap_scores(directory_path, agg_func, score_type):
+    scores_hap1 = pd.read_csv(directory_path + "gene_score_hap1_"+agg_func+"_"+score_type+".csv",
                               sep=","
                               ).dropna().set_index("hgnc_symbol").drop(['ensembl_gene_id'], axis=1).T
-    scores_hap2 = pd.read_csv(directory_path + "gene_score_hap2_"+agg_func+".csv",
+    scores_hap2 = pd.read_csv(directory_path + "gene_score_hap2_"+agg_func+"_"+score_type+".csv",
                               sep=","
                               ).dropna().set_index("hgnc_symbol").drop(['ensembl_gene_id'], axis=1).T
     return scores_hap1, scores_hap2
@@ -86,10 +86,12 @@ def load_tcga_dataset(directory_path, load_mut=False, rna_standardized=True):
         return rna[genes], cna[genes], tumor_type
 
 
-def draw_auc(fpr, tpr, auc_score,target_name, draw, save=False):
+def draw_auc(fpr, tpr, auc_score,target_name, draw, save=False, figsize=(10,8), color=None):
     if isinstance(fpr, list):
         fpr, tpr = fpr[draw], tpr[draw]
-    plt.plot(fpr, tpr, color="darkorange", label= target_name+" (area = %0.2f)" % auc_score)
+    plt.figure(figsize=figsize)
+    plt.plot(fpr, tpr, color=color if color is not None else "darkorange",
+             label= target_name+" (area = %0.2f)" % auc_score)
     plt.ylabel('True Positive Rate')
     plt.xlabel('False Positive Rate')
     plt.plot([0, 1], [0, 1], color="navy", linestyle="--")
@@ -100,6 +102,7 @@ def draw_auc(fpr, tpr, auc_score,target_name, draw, save=False):
         plt.savefig(save)
     else:
         plt.show()
+    plt.close()
         
 def draw_loss(train_scores, test_scores, save=False):
     epochs = range(1, len(train_scores) + 1)
@@ -154,16 +157,27 @@ def get_f1(pred, target):
     return f1_scores
 
 
-def multiclass_auc(pred_proba, target, target_names, save=False):
+def multiclass_auc(pred_proba, target, target_names, save=False, figsize=(10,8)):
     # Get the predicted class labels from the probabilities
     # Calculate the AUC and ROC curves for each class
     num_classes = pred_proba.shape[1]
     auc_scores = []
     roc_curves = []
 
+    # ensure numpy arrays for sklearn functions
+    import numpy as _np
+    if hasattr(pred_proba, 'detach'):
+        pred_proba_np = pred_proba.detach().cpu().numpy()
+    else:
+        pred_proba_np = _np.array(pred_proba)
+    if hasattr(target, 'detach'):
+        target_np = target.detach().cpu().numpy()
+    else:
+        target_np = _np.array(target)
+
     for i in range(num_classes):
-        y_true = target[:, i]
-        y_score = pred_proba[:, i]
+        y_true = target_np[:, i]
+        y_score = pred_proba_np[:, i]
 
         # Calculate AUC
         auc_score = roc_auc_score(y_true, y_score)
@@ -173,10 +187,26 @@ def multiclass_auc(pred_proba, target, target_names, save=False):
         fpr, tpr, _ = roc_curve(y_true, y_score)
         roc_curves.append((fpr, tpr))
 
+    # Plot all class ROC curves on a single larger figure with different colors
+    plt.figure(figsize=figsize)
+    colors = plt.cm.get_cmap('tab10').colors
     for i in range(num_classes):
         fpr, tpr = roc_curves[i]
         roc_auc = auc(fpr, tpr)
-        draw_auc(fpr, tpr, roc_auc, target_names[i], draw=0, save=save)
+        color = colors[i % len(colors)]
+        plt.plot(fpr, tpr, color=color, label=f"{target_names[i]} (AUC = {roc_auc:.2f})")
+
+    plt.plot([0, 1], [0, 1], color="navy", linestyle="--")
+    plt.ylabel('True Positive Rate')
+    plt.xlabel('False Positive Rate')
+    plt.legend(loc="lower right")
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
+    if save:
+        plt.savefig(save)
+    else:
+        plt.show()
+    plt.close()
     return auc_scores
 
 
