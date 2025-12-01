@@ -1,11 +1,12 @@
 from pnet import ReactomeNetwork, GenesetNetwork, pnet_loader, CustomizedLinear
 from util import util
 import pandas as pd
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import matplotlib.pyplot as plt
+from sklearn.metrics import precision_recall_curve, auc
 from torch.optim.lr_scheduler import StepLR
 from torchmetrics.classification import BinaryAUROC
 import numpy as np
@@ -331,20 +332,6 @@ class PNET_NN(pl.LightningModule):
         else: 
             return gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores,
 
-    def interpret(self, test_dataset, plot=False):
-        gene_feature_importances, additional_feature_importances = self.integrated_gradients(test_dataset)
-        gene_importances = self.gene_importance(test_dataset)
-        # layer_importance_scores = self.layerwise_importance(test_dataset)
-        layer_importance_scores = self.layerwise_importance(test_dataset)
-        
-        gene_order = gene_importances.mean().sort_values(ascending=True).index
-        if plot:
-            plt.rcParams["figure.figsize"] = (6,8)
-            gene_importances[list(gene_order[-20:])].plot(kind='box', vert=False)
-            plt.savefig(plot+'/imp_genes.pdf')
-        self.interpret_flag=False            
-        return gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores
-
 
 def fit(model, dataloader, optimizer):
     if torch.cuda.is_available():
@@ -402,7 +389,7 @@ def validate(model, dataloader):
     return loss
 
 
-def train(model, train_loader, test_loader, save_path, lr=0.5e-3, weight_decay=1e-4, epochs=300, verbose=False,
+def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_decay=1e-4, epochs=300, verbose=False,
           early_stopping=True, lr_scheduler=False):
     if torch.cuda.is_available():
         device = torch.device('cuda')
@@ -414,7 +401,25 @@ def train(model, train_loader, test_loader, save_path, lr=0.5e-3, weight_decay=1
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = StepLR(optimizer, step_size=30, gamma=lr)
+    
+    # The EarlyStopper needs a path to save the best model.
+    # If no save_path is provided, we won't use early stopping's model saving feature.
+    # We can still use it for stopping criteria.
+    # A better implementation might involve saving to a temporary file if no path is given.
+    # For now, we require a path for saving the model with early stopping.
+    if early_stopping and not save_path:
+        # Create a temporary path if none is provided to satisfy EarlyStopper
+        import tempfile
+        import atexit
+        temp_dir = tempfile.mkdtemp()
+        save_path = os.path.join(temp_dir, 'temp_model.pt')
+        # Cleanup the temporary directory on exit
+        atexit.register(lambda: os.path.exists(temp_dir) and __import__('shutil').rmtree(temp_dir))
+        warnings.warn(f"No save_path provided for early stopping. Using temporary path: {save_path}")
+
     early_stopper = util.EarlyStopper(save_path, patience=50, min_delta=0.01, verbose=verbose)
+    best_model_state = None
+
     train_scores = []
     test_scores = []
     for epoch in range(epochs):
@@ -428,16 +433,78 @@ def train(model, train_loader, test_loader, save_path, lr=0.5e-3, weight_decay=1
             print(f"Epoch {epoch + 1} of {epochs}")
             print("Train Loss: {}".format(train_epoch_loss))
             print("Test Loss: {}".format(test_epoch_loss))
-        if early_stopper.early_stop(test_epoch_loss, model) and early_stopping:
-            print('Hit early stopping criteria')
-            model.load_state_dict(torch.load(save_path))
-            break
+        if early_stopping:
+            if early_stopper.early_stop(test_epoch_loss, model):
+                print('Hit early stopping criteria')
+                model.load_state_dict(torch.load(save_path))
+                break
+
     return model, train_scores, test_scores
 
 
-def evaluate_interpret_save(model, test_dataset, target_names, path):
+def evaluate_and_interpret(model, test_dataset, target_names):
+    """
+    Evaluates the model and performs interpretation, returning results without saving.
+    """
+    x_test = test_dataset.x
+    additional_test = test_dataset.additional
+    y_test = test_dataset.y
+    model.to('cpu')
+
+    roc_auc_score = None
+    prc_auc_score = None
+    roc_curve_fig = None
+    prc_curve_fig = None
+
+    if model.task == 'BC' or model.task == 'MC':
+        pred_proba = model.predict_proba(x_test, additional_test).detach()
+        roc_auc_score, _ = util.get_auc(pred_proba, y_test, target_names)
+        prc_auc_score, _ = util.get_auc_prc_fig(pred_proba, y_test, target_names)
+        roc_curve_fig = None # Plots are now generated outside the loop
+        prc_curve_fig = None
+
+    gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores = model.interpret(test_dataset)
+
+    results = {
+        'gene_feature_importances': gene_feature_importances,
+        'additional_feature_importances': additional_feature_importances,
+        'gene_importances': gene_importances,
+        'layer_importance_scores': layer_importance_scores,
+        'roc_auc_score': roc_auc_score,
+        'prc_auc_score': prc_auc_score,
+        'y_true': y_test,
+        'pred_proba': pred_proba
+    }
+    return results
+
+
+def save_evaluation(results, path):
+    """
+    Saves the evaluation and interpretation results to a specified path.
+    """
     if not os.path.exists(path):
         os.makedirs(path)
+
+    if results['roc_curve_fig']:
+        results['roc_curve_fig'].savefig(path + '/roc_auc_curve.pdf')
+        plt.close(results['roc_curve_fig'])
+
+    if results['prc_curve_fig']:
+        results['prc_curve_fig'].savefig(path + '/prc_auc_curve.pdf')
+        plt.close(results['prc_curve_fig'])
+
+    results['gene_feature_importances'].to_csv(path + '/gene_feature_importances.csv')
+    results['additional_feature_importances'].to_csv(path + '/additional_feature_importances.csv')
+    results['gene_importances'].to_csv(path + '/gene_importances.csv')
+    for i, layer in enumerate(results['layer_importance_scores']):
+        layer.to_csv(path + '/layer_{}_importances.csv'.format(i))
+
+
+def evaluate_interpret_save(model, test_dataset, target_names, path):
+    """
+    Original function for evaluation, interpretation, and saving.
+    Now calls the separated functions.
+    """
     x_test = test_dataset.x
     additional_test = test_dataset.additional
     y_test = test_dataset.y
@@ -445,14 +512,30 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
     if model.task=='BC' or model.task=='MC':
         pred_proba = model.predict_proba(x_test, additional_test).detach()
         pred = model.predict(x_test, additional_test).detach()
-        auc_score = util.get_auc(pred_proba, y_test, target_names, save=path+'/auc_curve.pdf')
-        auc_prc = util.get_auc_prc(pred_proba, y_test)
+        roc_auc_score = util.get_auc(pred_proba, y_test, target_names, save=path + '/roc_auc_curve.pdf')
+
+        # Calculate and plot PRC curve
+        if y_test.shape[1] == 1:  # Binary classification
+            precision, recall, _ = precision_recall_curve(y_test, pred_proba)
+            prc_auc_score = auc(recall, precision)
+
+            plt.figure()
+            plt.plot(recall, precision, label=f'PRC curve (area = {prc_auc_score:.2f})')
+            plt.xlabel('Recall')
+            plt.ylabel('Precision')
+            plt.title('Precision-Recall Curve')
+            plt.legend(loc="lower left")
+            plt.savefig(path + '/prc_auc_curve.pdf')
+            plt.close()
+        else:  # Multiclass - not implemented for PRC curve plotting here
+            prc_auc_score = util.get_auc_prc(pred_proba, y_test)
+
         f1_score = util.get_f1(pred, y_test)
         
     
         torch.save(pred_proba, path+'/prediction_probabilities.pt')
-        torch.save(auc_score, path+'/AUC.pt')
-        torch.save(auc_prc, path+'/AUC_PRC.pt')
+        torch.save(roc_auc_score, path+'/ROC_AUC.pt')
+        torch.save(prc_auc_score, path+'/PRC_AUC.pt')
         torch.save(f1_score, path+'/F1.pt')
         
     gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores = model.interpret(test_dataset)
@@ -462,11 +545,11 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
     for i, layer in enumerate(layer_importance_scores):
         layer.to_csv(path+'/layer_{}_importances.csv'.format(i))
     
-    return gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores
+    return gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores, roc_auc_score, prc_auc_score if 'prc_auc_score' in locals() else None
 
 
 
-def run(genetic_data, target, save_path=os.path.dirname(__file__)+'/../../results/model', gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
+def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)

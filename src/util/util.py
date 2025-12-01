@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score, roc_curve, auc
+from sklearn.metrics import roc_auc_score, roc_curve, auc, precision_recall_curve
+from sklearn.preprocessing import LabelBinarizer
 
 
 MUTATIONS_DICT = {"3'Flank": 'Silent',
@@ -99,10 +101,12 @@ def draw_auc(fpr, tpr, auc_score,target_name, draw, save=False, figsize=(10,8), 
     plt.gca().spines['top'].set_visible(False)
     plt.gca().spines['right'].set_visible(False)
     if save:
-        plt.savefig(save)
+        plt.savefig(save, bbox_inches='tight')
     else:
         plt.show()
+    fig = plt.gcf()
     plt.close()
+    return fig
         
 def draw_loss(train_scores, test_scores, save=False):
     epochs = range(1, len(train_scores) + 1)
@@ -116,24 +120,213 @@ def draw_loss(train_scores, test_scores, save=False):
     plt.gca().spines['right'].set_visible(False)
     plt.legend()
     if save:
-        plt.savefig(save)
+        plt.savefig(save, bbox_inches='tight')
     else:
         plt.show()
 
 
 def get_auc(pred_proba, target, target_names, draw=0, save=False):
     target=target.to(torch.int)
+    fig = None
     if len(target.shape) > 1 and target.shape[1] > 1:
-        auc_score = multiclass_auc(pred_proba, target, target_names, save)
+        auc_score, fig = multiclass_auc(pred_proba, target, target_names, save)
     else:
         collapsed_target = target.int()
         auroc = torchmetrics.AUROC(task='binary')
         roc = torchmetrics.ROC(task='binary')
         auc_score = auroc(pred_proba, collapsed_target)
         fpr, tpr, tresholds = roc(pred_proba, collapsed_target)
-        draw_auc(fpr, tpr, auc_score,target_names, draw=0, save=save)
-    return auc_score
+        fig = draw_auc(fpr, tpr, auc_score,target_names, draw=0, save=save)
+    return auc_score, fig
 
+
+def plot_mean_roc_curve(all_y_true, all_pred_proba, target_names, save_path=None):
+    """
+    Plots the mean ROC curve from a k-fold cross-validation.
+    """
+    tprs = []
+    aucs = []
+    mean_fpr = np.linspace(0, 1, 100)
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for i in range(len(all_y_true)):
+        y_true_np = all_y_true[i].cpu().numpy()
+        pred_proba_np = all_pred_proba[i].cpu().numpy()
+        
+        # Handle multiclass if necessary
+        if y_true_np.shape[1] > 1:
+            # Example for a specific class, e.g., class 1 vs rest
+            # This part might need adjustment based on how you want to average multiclass ROCs
+            fpr, tpr, _ = roc_curve(y_true_np[:, 1], pred_proba_np[:, 1])
+        else:
+            fpr, tpr, _ = roc_curve(y_true_np, pred_proba_np)
+
+        interp_tpr = np.interp(mean_fpr, fpr, tpr)
+        interp_tpr[0] = 0.0
+        tprs.append(interp_tpr)
+        aucs.append(auc(fpr, tpr))
+
+    mean_tpr = np.mean(tprs, axis=0)
+    mean_tpr[-1] = 1.0
+    mean_auc = auc(mean_fpr, mean_tpr)
+    std_auc = np.std(aucs)
+    ax.plot(mean_fpr, mean_tpr, color='b',
+            label=r'Mean ROC (AUC = %0.2f $\pm$ %0.2f)' % (mean_auc, std_auc),
+            lw=2, alpha=.8)
+
+    std_tpr = np.std(tprs, axis=0)
+    tprs_upper = np.minimum(mean_tpr + std_tpr, 1)
+    tprs_lower = np.maximum(mean_tpr - std_tpr, 0)
+    ax.fill_between(mean_fpr, tprs_lower, tprs_upper, color='grey', alpha=.2,
+                    label=r'$\pm$ 1 std. dev.')
+
+    ax.plot([0, 1], [0, 1], linestyle='--', lw=2, color='r', label='Chance', alpha=.8)
+    ax.set(xlim=[-0.05, 1.05], ylim=[-0.05, 1.05],
+           xlabel='False Positive Rate', ylabel='True Positive Rate',
+           title='Mean Receiver Operating Characteristic')
+    ax.legend(loc="lower right")
+    
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    plt.close(fig)
+    return mean_auc, std_auc
+
+def plot_mean_prc_curve(all_y_true, all_pred_proba, save_path=None):
+    """
+    Plots the mean PRC curve from a k-fold cross-validation.
+    This is a placeholder and might need more sophisticated averaging.
+    """
+    # This is a simplified version. A proper implementation would involve
+    # averaging precision at different recall levels, which can be complex.
+    # For now, we plot the curve of the last fold as a representative.
+    y_true_np = all_y_true[-1].cpu().numpy()
+    pred_proba_np = all_pred_proba[-1].cpu().numpy()
+    precision, recall, _ = precision_recall_curve(y_true_np.ravel(), pred_proba_np.ravel())
+    prc_auc_score = auc(recall, precision)
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot(recall, precision, label=f'PRC curve (area = {prc_auc_score:.2f})')
+    ax.set(xlabel='Recall', ylabel='Precision', title='Mean Precision-Recall Curve')
+    ax.legend(loc="lower left")
+
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    plt.close(fig)
+    return prc_auc_score
+
+def get_auc_prc_fig(pred_proba, y_true, target_names, save=False):
+    """
+    Calculates PRC curve and AUC score, and generates a plot.
+    """
+    y_true_np = y_true.cpu().numpy()
+    pred_proba_np = pred_proba.cpu().numpy()
+
+    plt.figure()
+    precision, recall, _ = precision_recall_curve(y_true_np.ravel(), pred_proba_np.ravel())
+    prc_auc_score = auc(recall, precision)
+
+    plt.plot(recall, precision, label=f'PRC curve (area = {prc_auc_score:.2f})')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve')
+    plt.legend(loc="lower left")
+    if save:
+        plt.savefig(save, bbox_inches='tight')
+    fig = plt.gcf()
+    plt.close()
+    return prc_auc_score, fig
+
+def get_auc_plot(pred_proba, y_true, target_names):
+    """
+    Calculates ROC curve and AUC score, and generates a plot.
+
+    Args:
+        pred_proba (torch.Tensor): Predicted probabilities (or scores).
+        y_true (torch.Tensor): True labels.
+        target_names (list): List of class names.
+
+    Returns:
+        tuple: A tuple containing:
+            - matplotlib.figure.Figure: The generated ROC curve plot.
+            - float: The ROC AUC score (macro-averaged for multiclass).
+    """
+    y_true_np = y_true.cpu().numpy()
+    pred_proba_np = pred_proba.cpu().numpy()
+
+    fig = plt.figure(figsize=(8, 6))
+    roc_auc_score = None
+
+    if y_true_np.shape[1] == 1:  # Binary classification
+        fpr, tpr, _ = roc_curve(y_true_np, pred_proba_np)
+        roc_auc_score = auc(fpr, tpr)
+        plt.plot(fpr, tpr, label=f'ROC curve (area = {roc_auc_score:.2f})')
+        plt.plot([0, 1], [0, 1], 'k--', label='Random guess')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic (ROC) Curve')
+        plt.legend(loc="lower right")
+    else:  # Multiclass classification
+        lb = LabelBinarizer()
+        y_true_bin = lb.fit_transform(y_true_np.ravel())
+        if y_true_bin.shape[1] == 1: # It was binary after all
+            y_true_bin = np.hstack((1 - y_true_bin, y_true_bin))
+
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+        for i in range(len(target_names)):
+            fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], pred_proba_np[:, i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+            plt.plot(fpr[i], tpr[i], label=f'ROC curve of class {target_names[i]} (area = {roc_auc[i]:.2f})')
+
+        all_fpr = np.unique(np.concatenate([fpr[i] for i in range(len(target_names))]))
+        mean_tpr = np.zeros_like(all_fpr)
+        for i in range(len(target_names)):
+            mean_tpr += np.interp(all_fpr, fpr[i], tpr[i])
+        mean_tpr /= len(target_names)
+        fpr["macro"] = all_fpr
+        tpr["macro"] = mean_tpr
+        roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
+        plt.plot(fpr["macro"], tpr["macro"], label=f'Macro-average ROC (area = {roc_auc["macro"]:.2f})', linestyle='--')
+
+        plt.plot([0, 1], [0, 1], 'k--', label='Random guess')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('Receiver Operating Characteristic (ROC) Curve - Multiclass')
+        plt.legend(loc="lower right", fontsize='small')
+        roc_auc_score = roc_auc["macro"]
+
+    return fig, roc_auc_score
+
+def get_auc_prc_plot(pred_proba, y_true, target_names):
+    """
+    Calculates PRC curve and AUC score, and generates a plot.
+
+    Args:
+        pred_proba (torch.Tensor): Predicted probabilities (or scores).
+        y_true (torch.Tensor): True labels.
+        target_names (list): List of class names.
+
+    Returns:
+        tuple: A tuple containing:
+            - matplotlib.figure.Figure: The generated PRC curve plot.
+            - float: The PRC AUC score.
+    """
+    y_true_np = y_true.cpu().numpy()
+    pred_proba_np = pred_proba.cpu().numpy()
+
+    fig = plt.figure(figsize=(8, 6))
+    
+    precision, recall, _ = precision_recall_curve(y_true_np.ravel(), pred_proba_np.ravel())
+    prc_auc_score = auc(recall, precision)
+
+    plt.plot(recall, precision, label=f'PRC curve (area = {prc_auc_score:.2f})')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve')
+    plt.legend(loc="lower left")
+
+    return fig, prc_auc_score
 
 def get_auc_prc(pred_proba, target):
     target=target.to(torch.int)
@@ -203,11 +396,12 @@ def multiclass_auc(pred_proba, target, target_names, save=False, figsize=(10,8))
     plt.gca().spines['top'].set_visible(False)
     plt.gca().spines['right'].set_visible(False)
     if save:
-        plt.savefig(save)
+        plt.savefig(save, bbox_inches='tight')
     else:
         plt.show()
+    fig = plt.gcf()
     plt.close()
-    return auc_scores
+    return auc_scores, fig
 
 
 def select_non_constant_genes(df, cutoff=0.05):
