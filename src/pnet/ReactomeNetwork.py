@@ -240,7 +240,7 @@ class ReactomeNetwork:
         """
         input_mask = pd.DataFrame(index=nbr_genetic_input_types*self.gene_list, columns=self.gene_list).fillna(0)
         for col in input_mask.columns:
-            input_mask[col].loc[col] = 1
+            input_mask.loc[col, col] = 1
         gene_masks = [l.values for l in self.gene_layers]
         pathway_masks = [l.values for l in self.pathway_layers]
         if regulatory:
