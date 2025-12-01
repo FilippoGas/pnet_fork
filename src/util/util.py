@@ -193,26 +193,79 @@ def plot_mean_roc_curve(all_y_true, all_pred_proba, target_names, save_path=None
 
 def plot_mean_prc_curve(all_y_true, all_pred_proba, save_path=None):
     """
-    Plots the mean PRC curve from a k-fold cross-validation.
-    This is a placeholder and might need more sophisticated averaging.
+    Plots the mean Precision-Recall curve from a k-fold cross-validation.
+    Aggregates folds by interpolating precision over a fixed grid of recall values.
     """
-    # This is a simplified version. A proper implementation would involve
-    # averaging precision at different recall levels, which can be complex.
-    # For now, we plot the curve of the last fold as a representative.
-    y_true_np = all_y_true[-1].cpu().numpy()
-    pred_proba_np = all_pred_proba[-1].cpu().numpy()
-    precision, recall, _ = precision_recall_curve(y_true_np.ravel(), pred_proba_np.ravel())
-    prc_auc_score = auc(recall, precision)
+    precisions = []
+    aucs = []
+    # 1. Define a fixed grid for Recall (0 to 1) to allow averaging
+    mean_recall = np.linspace(0, 1, 100)
     
+    # To calculate the "No Skill" baseline (fraction of positives)
+    total_positives = 0
+    total_samples = 0
+
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.plot(recall, precision, label=f'PRC curve (area = {prc_auc_score:.2f})')
-    ax.set(xlabel='Recall', ylabel='Precision', title='Mean Precision-Recall Curve')
+
+    for i in range(len(all_y_true)):
+        y_true_np = all_y_true[i].cpu().numpy()
+        pred_proba_np = all_pred_proba[i].cpu().numpy()
+        
+        # Track counts for the baseline
+        total_positives += np.sum(y_true_np)
+        total_samples += len(y_true_np)
+
+        # Handle multiclass/multilabel by flattening or selecting column
+        # Assuming binary or flattened for single metric calculation as per previous context
+        if y_true_np.ndim > 1 and y_true_np.shape[1] > 1:
+             # Flattening allows for "Micro-average"
+             # Alternatively, select specific class: y_true_np[:, 1], pred_proba_np[:, 1]
+             precision, recall, _ = precision_recall_curve(y_true_np.ravel(), pred_proba_np.ravel())
+        else:
+             precision, recall, _ = precision_recall_curve(y_true_np, pred_proba_np)
+
+        # precision_recall_curve returns results where recall is decreasing (1 -> 0).
+        # np.interp requires the x-coordinate (mean_recall) to be increasing.
+        # We must reverse recall and precision arrays for the interpolation to work.
+        interp_precision = np.interp(mean_recall, recall[::-1], precision[::-1])
+        precisions.append(interp_precision)
+        
+        # Calculate AUC for this fold
+        pr_auc = auc(recall, precision)
+        aucs.append(pr_auc)
+
+    # 3. Average the Precisions
+    mean_precision = np.mean(precisions, axis=0)
+    mean_auc = auc(mean_recall, mean_precision)
+    std_auc = np.std(aucs)
+
+    # 4. Plot Mean Curve
+    ax.plot(mean_recall, mean_precision, color='b',
+            label=r'Mean PRC (AUC = %0.2f $\pm$ %0.2f)' % (mean_auc, std_auc),
+            lw=2, alpha=.8)
+
+    # 5. Plot Standard Deviation Shading
+    std_precision = np.std(precisions, axis=0)
+    precisions_upper = np.minimum(mean_precision + std_precision, 1)
+    precisions_lower = np.maximum(mean_precision - std_precision, 0)
+    ax.fill_between(mean_recall, precisions_lower, precisions_upper, color='grey', alpha=.2,
+                    label=r'$\pm$ 1 std. dev.')
+
+    # 6. Plot "No Skill" Baseline
+    # The baseline for PRC is P / (P + N)
+    baseline = total_positives / total_samples
+    ax.plot([0, 1], [baseline, baseline], linestyle='--', lw=2, color='r', label='No Skill', alpha=.8)
+
+    ax.set(xlim=[-0.05, 1.05], ylim=[-0.05, 1.05],
+           xlabel='Recall', ylabel='Precision',
+           title='Mean Precision-Recall Curve')
     ax.legend(loc="lower left")
 
     if save_path:
         fig.savefig(save_path, bbox_inches='tight')
     plt.close(fig)
-    return prc_auc_score
+    
+    return mean_auc, std_auc
 
 def get_auc_prc_fig(pred_proba, y_true, target_names, save=False):
     """
