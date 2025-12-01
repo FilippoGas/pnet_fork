@@ -81,7 +81,7 @@ def objective(trial):
             roc = roc_auc_score(y_true, pred_proba, average='macro')
             prc = average_precision_score(y_true, pred_proba, average='macro')
             
-            preds_binary = (pred_proba > 0.5).astype(int)
+            preds_binary = (pred_proba > 0.5).int()
             f1 = f1_score(y_true, preds_binary, average='macro')
             
             fold_roc.append(roc)
