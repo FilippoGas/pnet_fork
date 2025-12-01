@@ -74,13 +74,14 @@ if not os.path.exists(output_dir):
 # Generate and save mean ROC and PRC plots
 if all_y_true and all_pred_proba:
     mean_roc_auc, std_roc_auc = util.plot_mean_roc_curve(all_y_true, all_pred_proba, tumor_types.columns.values, f"{output_dir}/roc_auc_curve.pdf")
-    mean_prc_auc = util.plot_mean_prc_curve(all_y_true, all_pred_proba, f"{output_dir}/prc_auc_curve.pdf")
+    mean_prc_auc, std_prc_auc = util.plot_mean_prc_curve(all_y_true, all_pred_proba, f"{output_dir}/prc_auc_curve.pdf")
     
     # Save mean AUC scores
     pd.DataFrame({
         'mean_roc_auc': [mean_roc_auc],
         'std_roc_auc': [std_roc_auc],
-        'mean_prc_auc': [mean_prc_auc]
+        'mean_prc_auc': [mean_prc_auc],
+        'std_prc_auc': [std_prc_auc]
     }).to_csv(f"{output_dir}/mean_auc_scores.csv", index=False)
 
 # Average importance scores and folds
