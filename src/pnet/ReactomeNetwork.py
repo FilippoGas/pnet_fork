@@ -143,7 +143,8 @@ class ReactomeNetwork:
         """
         level = self.get_pathway_level(pathway)
         children_genes = self.get_children_gene_inputs(level, pathway)
-        self.gene_layers[level][pathway][children_genes] = 0
+        #self.gene_layers[level][pathway][children_genes] = 0
+        self.gene_layers[level].loc[children_genes, pathway] = 0
 
     def get_nodes_at_levels(self):
         """
