@@ -19,10 +19,10 @@ score_type  = sys.argv[2]
 tumor_type  = sys.argv[3]
 
 # Paths
-input_dir           = "/shares/CIBIO-Storage/home/filippo.gastaldello/data/pnet_fork/pnet_gene/all_cancers_hyperparam_search/aggregated_scores/"+score_type+"/"+agg_func+"/"
-cancer_genes_list   = "/shares/CIBIO-Storage/home/filippo.gastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
-output_dir          = "/shares/CIBIO-Storage/home/filippo.gastaldello/data/pnet_fork/pnet_gene/all_cancers_hyperparam_searc/bc/"+tumor_type+"/plots/"+score_type+"/"+agg_func
-tumor_types_path    = "/shares/CIBIO-Storage/home/filippo.gastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
+input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/aggregated_scores/"+score_type+"/"+agg_func+"/"
+cancer_genes_list   = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
+output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/hyperparam_tuning_5foldCV/"+tumor_type+"/plots/"+score_type+"/"+agg_func
+tumor_types_path    = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
 
 # Load scores and sample data
 print("Loading data...")
@@ -49,7 +49,7 @@ def objective(trial):
     weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
     batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
 
-    n_splits_search = 2 
+    n_splits_search = 1 
     kf_search = KFold(n_splits=n_splits_search, shuffle=True, random_state=42)
     
     fold_roc = []
@@ -208,5 +208,5 @@ layer_list          = [avg_gene_feature_importances, avg_additional_feature_impo
 layer_list_names    = ['gene_feature', 'gene_feature', 'gene'] + [f'layer_{i}' for i in range(len(avg_layer_importance_scores))]
 layer_list_dict     = dict(zip(layer_list_names, layer_list))
 
-sk  = sankey_diag.SankeyDiag(layer_list_dict, path='/shares/CIBIO-Storage/home/filippo.gastaldello/data/pnet_fork/resources/pathways_short_names.csv', runs=1)
+sk  = sankey_diag.SankeyDiag(layer_list_dict, path='/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/pathways_short_names.csv', runs=1)
 fig = sk.get_sankey_diag(f"{output_dir}/sankey.html")
