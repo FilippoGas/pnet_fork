@@ -64,7 +64,7 @@ def objective(trial):
         model, _, _, _, test_dataset = Pnet.run(
             genetic_data, tumor_types, seed=0, 
             dropout=dropout, lr=lr, weight_decay=weight_decay,
-            batch_size=batch_size, epochs=1500, early_stopping=True,
+            batch_size=batch_size, epochs=150, early_stopping=True,
             train_inds=train_sample, test_inds=test_sample, 
             input_dropout=input_dropout, gene_set=canc_genes
         )
