@@ -123,7 +123,7 @@ final_bs = best_trial.params['batch_size']
 print("\nRunning Final Analysis with Optimized Parameters...")
 
 # CV
-n_splits = 2
+n_splits = 5
 kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
 all_gene_feature_importances = []
