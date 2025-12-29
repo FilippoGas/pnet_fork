@@ -13,11 +13,12 @@ from util import util, sankey_diag
 agg_func    = sys.argv[1] # Function used to aggregate transcript scores into gene scores
 score_type  = sys.argv[2]
 tumor_type  = sys.argv[3]
+gene_list   = sys.argv[4]
 
 # Paths
 input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/aggregated_scores/"+score_type+"/"+agg_func+"/"
 cancer_genes_list   = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
-output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+tumor_type+"/plots/"+score_type+"/"+agg_func
+output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+gene_list+"/"+tumor_type+"/plots/"+score_type+"/"+agg_func
 tumor_types_path    = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
 
 # Load scores and sample data
@@ -28,8 +29,13 @@ genetic_data = {'scores_hap1':scores_hap1,
 # Load tumor subtypes
 tumor_types =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
 
-# Load cancer genes list
-canc_genes = list(pd.read_csv(cancer_genes_list)['hgnc'])
+# Chose gene list to operate on
+if gene_list == "cancer_genes":
+    # Load cancer genes list
+    selected_genes = list(pd.read_csv(cancer_genes_list)['hgnc'])
+else:
+    # Select all genes in dataset
+    selected_genes = list(scores_hap1.columns)
 
 samples = np.array(scores_hap1.index.tolist())
 n_splits = 2
@@ -49,7 +55,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples)):
     model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(
         genetic_data, tumor_types, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
         batch_size=64, epochs=3000, early_stopping=True, train_inds=train_sample,
-        test_inds=test_sample, input_dropout=0.5, gene_set=canc_genes
+        test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes
     )
 
     # Perform evaluation, generate plots and importances csv and save
