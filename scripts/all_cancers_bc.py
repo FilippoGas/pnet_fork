@@ -26,7 +26,7 @@ scores_hap1, scores_hap2 = util.load_hap_scores(input_dir, agg_func, score_type)
 genetic_data = {'scores_hap1':scores_hap1,
                 'scores_hap2':scores_hap2}
 
-# Load tumor subtypes
+# Load tumor types
 tumor_types =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
 
 # Chose gene list to operate on
@@ -38,7 +38,7 @@ else:
     selected_genes = list(scores_hap1.columns)
 
 samples = np.array(scores_hap1.index.tolist())
-n_splits = 2
+n_splits = 5
 kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
 all_gene_feature_importances = []
@@ -85,9 +85,9 @@ if all_y_true and all_pred_proba:
     # Save mean AUC scores
     pd.DataFrame({
         'mean_roc_auc': [mean_roc_auc],
-        'std_roc_auc': [std_roc_auc],
+        'std_roc_auc':  [std_roc_auc],
         'mean_prc_auc': [mean_prc_auc],
-        'std_prc_auc': [std_prc_auc]
+        'std_prc_auc':  [std_prc_auc]
     }).to_csv(f"{output_dir}/mean_auc_scores.csv", index=False)
 
 # Average importance scores and folds

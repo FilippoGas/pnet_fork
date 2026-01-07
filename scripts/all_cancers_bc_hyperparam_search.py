@@ -49,7 +49,7 @@ def objective(trial):
     weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
     batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
 
-    n_splits_search = 1 
+    n_splits_search = 2  
     kf_search = KFold(n_splits=n_splits_search, shuffle=True, random_state=42)
     
     fold_roc = []
