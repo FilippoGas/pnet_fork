@@ -70,8 +70,9 @@ class GradientReversal(Function):
 
 class PNET_NN(pl.LightningModule):
     def __init__(self, reactome_network, task, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3, weight_decay=1e-5,
-                 dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None, random_network=False, fcnn=False,
-                 loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False):
+                 dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None, random_network=False,
+                 fcnn=False, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False,
+                 add_gradient_reversal_layer=False, alpha=1.0, n_covar=0):
         super().__init__()
         self.reactome_network = reactome_network
         self.nbr_gene_inputs = nbr_gene_inputs
@@ -85,6 +86,7 @@ class PNET_NN(pl.LightningModule):
         self.task = task
         self.loss_weight = loss_weight
         self.aux_loss_weights = aux_loss_weights
+        self.alpha = alpha # Gradient reversal coefficient
         if loss_fn is None:
             self.loss_fn = util.get_loss_function(task)
         else:
@@ -131,6 +133,20 @@ class PNET_NN(pl.LightningModule):
         # Add final prediction layer:
         self.preds.append(nn.Sequential(*[nn.Linear(in_features=pathway_masks[len(gene_masks) - 1].shape[0] +
                                                                 self.additional_dims, out_features=self.output_dim)]))
+        
+        # Add adversary for gradient reversal
+        if add_gradient_reversal_layer:
+            # Get dimensions for gradient reversal layer
+            adv_input = pathway_masks[-1].shape[0]  # Number of nodes in the last layer of the network (the inputs of the adversary layer)
+            self.n_covariates = n_covar             # Number of covariates needed for correction(output of the adversary layer, what it has to predict)
+            # Build the adversary network
+            self.adversary = nn.Sequential(
+                nn.Linear(adv_input, 50),
+                nn.ReLU(),
+                nn.Linear(50,20),
+                nn.ReLU(),
+                nn.Linear(20, self.n_covariates)
+            )
         # Weighting of the different prediction layers:
         self.attn = nn.Linear(in_features=(self.num_pred_heads) * self.output_dim, out_features=self.output_dim)
 
@@ -563,7 +579,10 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
 
 
 
-def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
+def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3,
+        weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False,
+        fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[],
+        add_gradient_reversal_layer=False, alpha=1.0, n_covar=0):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
@@ -576,8 +595,8 @@ def run(genetic_data, target, save_path=None, gene_set=None, additional_data=Non
     model = PNET_NN(reactome_network=reactome_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
-                    input_dropout=input_dropout, aux_loss_weights=aux_loss_weights
-                    )
+                    input_dropout=input_dropout, aux_loss_weights=aux_loss_weights, add_gradient_reversal_layer=add_gradient_reversal_layer,
+                    alpha=alpha, n_covar=n_covar)
     train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
                                              early_stopping)
