@@ -8,13 +8,11 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 from sklearn.metrics import precision_recall_curve, auc
 from torch.optim.lr_scheduler import StepLR
-from torchmetrics.classification import BinaryAUROC
 import numpy as np
 import os
 import warnings
 import pytorch_lightning as pl
 import captum
-from scipy.stats import zscore
 
 
 class PNET_Block(nn.Module):
