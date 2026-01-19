@@ -194,13 +194,45 @@ class PNET_NN(pl.LightningModule):
             return y, y_hats, covariates_pred
         else:
             return y, y_hats
+        
     def step(self, who, batch, batch_nb):
-        x, additional, y = batch
-        pred_y, _ = self(x, additional)
-        loss = F.cross_entropy(pred_y, y, reduction='mean')
-
-        self.log(who + '_bce_loss', loss)
-        return loss
+        if self.add_gradient_reversal_layer:
+            # Unpack batch
+            x, additional, covariates, y = batch
+            # Forward pass
+            pred_y, _, cov_preds = self(x, additional)
+            # Compute main task loss
+            task_loss = F.cross_entropy(pred_y, y, reduction='mean')    
+            # Compute adversary loss
+            # Slice predictions (assuming order PC1-6, age, sex)
+            pred_PCs = cov_preds[:,0:6]
+            pred_age = cov_preds[:,6]
+            pred_sex = cov_preds[:,7]
+            # Slice targets
+            true_PCs = covariates[:,0:6]
+            true_age = covariates[:,6]
+            true_sex = covariates[:,7]
+            # Compute losses
+            PCs_loss = F.mse_loss(pred_PCs, true_PCs)
+            age_loss = F.mse_loss(pred_age, true_age)
+            sex_loss = F.binary_cross_entropy_with_logits(pred_sex, true_sex.float())
+            # Total adversary loss
+            adv_loss = PCs_loss + age_loss + sex_loss
+            # Combine, log and return
+            total_loss = task_loss + adv_loss
+            self.log(who, "_total_loss", total_loss)
+            self.log(who, "_task_loss", task_loss)
+            self.log(who, "_adv_loss", adv_loss)
+            return total_loss
+        else:
+            # Unpack batch
+            x, additional, y = batch
+            # Forward pass
+            pred_y, _ = self(x, additional)
+            # Compute loss
+            loss = F.cross_entropy(pred_y, y, reduction='mean')
+            self.log(who + '_bce_loss', loss)
+            return loss
     
     def predict_proba(self,  x, additional_data, threshold=0.5):
         logits, lower_level_logits = self.forward(x, additional_data)
