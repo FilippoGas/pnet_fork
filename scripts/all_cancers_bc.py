@@ -4,6 +4,7 @@ sys.path.append(os.path.dirname(__file__)+"/../src/")
 
 import pandas as pd
 import numpy as np
+import pickle
 import matplotlib.pyplot as plt
 from sklearn.model_selection import KFold
 from pnet import Pnet
@@ -77,8 +78,12 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples)):
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
-# Generate and save mean ROC and PRC plots
+# Save all_y_true and all_y_pred as pickle
+pickle.dump(all_pred_proba , open(f"{output_dir}/all_y_proba.pickle", "wb"))
+pickle.dump(all_y_true, open(f"{output_dir}/all_y_ture.pickle", "wb"))
+
 if all_y_true and all_pred_proba:
+# Generate and save mean ROC and PRC plots
     mean_roc_auc, std_roc_auc = util.plot_mean_roc_curve(all_y_true, all_pred_proba, tumor_types.columns.values, f"{output_dir}/roc_auc_curve.pdf")
     mean_prc_auc, std_prc_auc = util.plot_mean_prc_curve(all_y_true, all_pred_proba, f"{output_dir}/prc_auc_curve.pdf")
     
