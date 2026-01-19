@@ -72,7 +72,7 @@ class PNET_NN(pl.LightningModule):
     def __init__(self, reactome_network, task, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3, weight_decay=1e-5,
                  dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None, random_network=False,
                  fcnn=False, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False,
-                 add_gradient_reversal_layer=False, alpha=1.0, n_covar=0):
+                 add_gradient_reversal_layer=False, alpha=1.0):
         super().__init__()
         self.reactome_network = reactome_network
         self.nbr_gene_inputs = nbr_gene_inputs
@@ -138,7 +138,7 @@ class PNET_NN(pl.LightningModule):
         if add_gradient_reversal_layer:
             # Get dimensions for gradient reversal layer
             adv_input = pathway_masks[-1].shape[0]  # Number of nodes in the last layer of the network (the inputs of the adversary layer)
-            self.n_covariates = n_covar             # Number of covariates needed for correction(output of the adversary layer, what it has to predict)
+            self.n_covariates = 8                   # Number of covariates needed for correction, in this case age, sex and first 6 PCs (output of the adversary layer, what it has to predict)
             # Build the adversary network
             self.adversary = nn.Sequential(
                 nn.Linear(adv_input, 50),
@@ -146,7 +146,7 @@ class PNET_NN(pl.LightningModule):
                 nn.Linear(50,20),
                 nn.ReLU(),
                 nn.Linear(20, self.n_covariates)
-            )
+        )
         # Weighting of the different prediction layers:
         self.attn = nn.Linear(in_features=(self.num_pred_heads) * self.output_dim, out_features=self.output_dim)
 
@@ -582,7 +582,7 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
 def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3,
         weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False,
         fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[],
-        add_gradient_reversal_layer=False, alpha=1.0, n_covar=0):
+        add_gradient_reversal_layer=False, alpha=1.0):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
