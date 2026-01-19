@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.autograd import Function
 import matplotlib.pyplot as plt
 from sklearn.metrics import precision_recall_curve, auc
 from torch.optim.lr_scheduler import StepLR
@@ -51,6 +52,21 @@ class Regulatory_Block(nn.Module):
         x_regulatory = self.regulatory_layer(x)
         return x_regulatory + x
 
+class GradientReversal(Function):
+    @staticmethod
+    def forward(ctx, x, alpha):
+        # Save x and alpha (strength of the reversal) for the backward pass 
+        ctx.save_for_backwards(x)
+        ctx.alpha = alpha
+        # Pass x through without doing anything
+        return x
+    
+    @staticmethod
+    def backwards(ctx, grad_output):
+        # grad_output is the gradient coming back from the adversary (the part of the network learning the covariates),
+        # we need to reverse its sign and scale it for alpha.
+        # Returns None as second parameter (alpha) as it is a fixed number, not a parameter, so it does not need gradient
+        return grad_output.neg() * ctx.alpha, None
 
 class PNET_NN(pl.LightningModule):
     def __init__(self, reactome_network, task, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3, weight_decay=1e-5,
