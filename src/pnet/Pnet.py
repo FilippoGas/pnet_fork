@@ -173,7 +173,15 @@ class PNET_NN(pl.LightningModule):
             x = layer(x, genes)
             x_cat = torch.concat([x, additional_data], dim=1)
             y_hats.append(pred(x_cat))
-            
+
+        # At this point x contains the final output of the final PNET block
+        # to be used as input for the gradient reversal MLP
+
+        # Apply gradient reversal
+        reversed_features = GradientReversal.apply(x, self.alpha)
+        # Predict covariates 
+        covariates_pred = self.adversary(reversed_features)
+
         # Generate final prediction by weighting all predictions
         y = self.attn(torch.concat(y_hats, dim=1))
         
@@ -181,7 +189,7 @@ class PNET_NN(pl.LightningModule):
         if self.interpret_flag:
             return y
         else:
-            return y, y_hats
+            return y, y_hats, covariates_pred
 
     def step(self, who, batch, batch_nb):
         x, additional, y = batch
