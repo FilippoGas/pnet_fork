@@ -86,6 +86,7 @@ class PNET_NN(pl.LightningModule):
         self.task = task
         self.loss_weight = loss_weight
         self.aux_loss_weights = aux_loss_weights
+        self.add_gradient_reversal_layer=add_gradient_reversal_layer
         self.alpha = alpha # Gradient reversal coefficient
         if loss_fn is None:
             self.loss_fn = util.get_loss_function(task)
@@ -174,13 +175,14 @@ class PNET_NN(pl.LightningModule):
             x_cat = torch.concat([x, additional_data], dim=1)
             y_hats.append(pred(x_cat))
 
-        # At this point x contains the final output of the final PNET block
-        # to be used as input for the gradient reversal MLP
+        if self.add_gradient_reversal_layer:
+            # At this point x contains the final output of the final PNET block
+            # to be used as input for the gradient reversal MLP
 
-        # Apply gradient reversal
-        reversed_features = GradientReversal.apply(x, self.alpha)
-        # Predict covariates 
-        covariates_pred = self.adversary(reversed_features)
+            # Apply gradient reversal
+            reversed_features = GradientReversal.apply(x, self.alpha)
+            # Predict covariates 
+            covariates_pred = self.adversary(reversed_features)
 
         # Generate final prediction by weighting all predictions
         y = self.attn(torch.concat(y_hats, dim=1))
@@ -188,9 +190,10 @@ class PNET_NN(pl.LightningModule):
         # return only final prediction if in interpret mode or all predictions of all levels if in training
         if self.interpret_flag:
             return y
-        else:
+        elif self.add_gradient_reversal_layer:
             return y, y_hats, covariates_pred
-
+        else:
+            return y, y_hats
     def step(self, who, batch, batch_nb):
         x, additional, y = batch
         pred_y, _ = self(x, additional)
