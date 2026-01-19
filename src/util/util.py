@@ -218,8 +218,6 @@ def plot_mean_prc_curve(all_y_true, all_pred_proba, save_path=None):
         # Handle multiclass/multilabel by flattening or selecting column
         # Assuming binary or flattened for single metric calculation as per previous context
         if y_true_np.ndim > 1 and y_true_np.shape[1] > 1:
-             # Flattening allows for "Micro-average"
-             # Alternatively, select specific class: y_true_np[:, 1], pred_proba_np[:, 1]
              precision, recall, _ = precision_recall_curve(y_true_np.ravel(), pred_proba_np.ravel())
         else:
              precision, recall, _ = precision_recall_curve(y_true_np, pred_proba_np)
