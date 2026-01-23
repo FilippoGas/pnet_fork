@@ -426,7 +426,7 @@ def fit(model, dataloader, optimizer):
     model.train()
     running_loss = 0.0
     for batch in dataloader:
-        if model.add_gradient_reversal_layer:
+        if len(batch)==4:
             gene_data, additional_data, covariates, y = batch
             covariates = covariates.to(device)
         else:
@@ -436,6 +436,8 @@ def fit(model, dataloader, optimizer):
         optimizer.zero_grad()
         
         if model.add_gradient_reversal_layer:
+            if covariates is None:
+                raise ValueError("Model expects gradient reversal but dataloader did not provide covariates")
             y_hat, y_hats, cov_preds = model(gene_data, additional_data)
         else:
             y_hat, y_hats = model(gene_data, additional_data)
@@ -469,7 +471,7 @@ def validate(model, dataloader):
     model.eval()
     running_loss = 0.0
     for batch in dataloader:
-        if model.add_gradient_reversal_layer:
+        if len(batch)==4:
             gene_data, additional_data, covariates, y = batch
             covariates = covariates.to(device)
         else:
@@ -478,6 +480,8 @@ def validate(model, dataloader):
         gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
         
         if model.add_gradient_reversal_layer:
+            if covariates is None:
+                raise ValueError("Model expects gradient reversal but dataloader did not provide covariates")
             y_hat, y_hats, cov_preds = model(gene_data, additional_data)
         else:
             y_hat, y_hats = model(gene_data, additional_data)
