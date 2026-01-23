@@ -237,7 +237,11 @@ class PNET_NN(pl.LightningModule):
             return loss
     
     def predict_proba(self,  x, additional_data, threshold=0.5):
-        logits, lower_level_logits = self.forward(x, additional_data)
+        out = self.forward(x, additional_data)
+        if self.add_gradient_reversal_layer:
+            logits, lower_level_logits, _ = out
+        else:
+            logits, lower_level_logits = out
         if self.task == 'BC':
             probabilities = torch.sigmoid(logits)
             return probabilities
@@ -250,7 +254,11 @@ class PNET_NN(pl.LightningModule):
             return logits
 
     def predict(self,  x, additional_data, threshold=0.5):
-        logits, lower_level_logits = self.forward(x, additional_data)
+        out = self.forward(x, additional_data)
+        if self.add_gradient_reversal_layer:
+            logits, lower_level_logits, _ = out
+        else:
+            logits, lower_level_logits = out
         if self.task == 'BC':
             probabilities = torch.sigmoid(logits)
             predictions = (probabilities > threshold).float()
