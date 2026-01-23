@@ -72,7 +72,7 @@ class PNET_NN(pl.LightningModule):
     def __init__(self, reactome_network, task, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3, weight_decay=1e-5,
                  dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None, random_network=False,
                  fcnn=False, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False,
-                 add_gradient_reversal_layer=False, alpha=1.0):
+                 add_gradient_reversal_layer=False, alpha=1.0, n_covariates=8):
         super().__init__()
         self.reactome_network = reactome_network
         self.nbr_gene_inputs = nbr_gene_inputs
@@ -88,6 +88,7 @@ class PNET_NN(pl.LightningModule):
         self.aux_loss_weights = aux_loss_weights
         self.add_gradient_reversal_layer=add_gradient_reversal_layer
         self.alpha = alpha # Gradient reversal coefficient
+        self.n_covariates = n_covariates
         if loss_fn is None:
             self.loss_fn = util.get_loss_function(task)
         else:
@@ -139,7 +140,6 @@ class PNET_NN(pl.LightningModule):
         if add_gradient_reversal_layer:
             # Get dimensions for gradient reversal layer
             adv_input = pathway_masks[-1].shape[0]  # Number of nodes in the last layer of the network (the inputs of the adversary layer)
-            self.n_covariates = 8                   # Number of covariates needed for correction, in this case age, sex and first 6 PCs (output of the adversary layer, what it has to predict)
             # Build the adversary network
             self.adversary = nn.Sequential(
                 nn.Linear(adv_input, 50),
@@ -195,6 +195,22 @@ class PNET_NN(pl.LightningModule):
         else:
             return y, y_hats
         
+    def calculate_adv_loss(self, cov_preds, covariates):
+        # Slice predictions (assuming order PC1-6, age, sex)
+        # Note: This logic assumes n_covariates=8 and specific structure.
+        pred_PCs = cov_preds[:,0:6]
+        pred_age = cov_preds[:,6]
+        pred_sex = cov_preds[:,7]
+        # Slice targets
+        true_PCs = covariates[:,0:6]
+        true_age = covariates[:,6]
+        true_sex = covariates[:,7]
+        # Compute losses
+        PCs_loss = F.mse_loss(pred_PCs, true_PCs)
+        age_loss = F.mse_loss(pred_age, true_age)
+        sex_loss = F.binary_cross_entropy_with_logits(pred_sex, true_sex.float())
+        return PCs_loss + age_loss + sex_loss
+
     def step(self, who, batch, batch_nb):
         if self.add_gradient_reversal_layer:
             # Unpack batch
@@ -203,21 +219,7 @@ class PNET_NN(pl.LightningModule):
             pred_y, _, cov_preds = self(x, additional)
             # Compute main task loss
             task_loss = F.cross_entropy(pred_y, y, reduction='mean')    
-            # Compute adversary loss
-            # Slice predictions (assuming order PC1-6, age, sex)
-            pred_PCs = cov_preds[:,0:6]
-            pred_age = cov_preds[:,6]
-            pred_sex = cov_preds[:,7]
-            # Slice targets
-            true_PCs = covariates[:,0:6]
-            true_age = covariates[:,6]
-            true_sex = covariates[:,7]
-            # Compute losses
-            PCs_loss = F.mse_loss(pred_PCs, true_PCs)
-            age_loss = F.mse_loss(pred_age, true_age)
-            sex_loss = F.binary_cross_entropy_with_logits(pred_sex, true_sex.float())
-            # Total adversary loss
-            adv_loss = PCs_loss + age_loss + sex_loss
+            adv_loss = self.calculate_adv_loss(cov_preds, covariates)
             # Combine, log and return
             total_loss = task_loss + adv_loss
             self.log(who, "_total_loss", total_loss)
@@ -416,10 +418,20 @@ def fit(model, dataloader, optimizer):
     model.train()
     running_loss = 0.0
     for batch in dataloader:
-        gene_data, additional_data, y = batch
+        if model.add_gradient_reversal_layer:
+            gene_data, additional_data, covariates, y = batch
+            covariates = covariates.to(device)
+        else:
+            gene_data, additional_data, y = batch
+            
         gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
         optimizer.zero_grad()
-        y_hat, y_hats = model(gene_data, additional_data)
+        
+        if model.add_gradient_reversal_layer:
+            y_hat, y_hats, cov_preds = model(gene_data, additional_data)
+        else:
+            y_hat, y_hats = model(gene_data, additional_data)
+            
         if model.loss_weight is not None:
             weight = model.loss_weight.to(device)
             weight_ = weight[y.data.view(-1).long()].view_as(y)
@@ -428,6 +440,10 @@ def fit(model, dataloader, optimizer):
         else:
             aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
             loss = model.loss_fn(y_hat, y) + sum(aux_losses)
+            
+        if model.add_gradient_reversal_layer:
+            loss += model.calculate_adv_loss(cov_preds, covariates)
+            
         running_loss += loss.item()
         loss.backward()
         optimizer.step()
@@ -445,9 +461,19 @@ def validate(model, dataloader):
     model.eval()
     running_loss = 0.0
     for batch in dataloader:
-        gene_data, additional_data, y = batch
+        if model.add_gradient_reversal_layer:
+            gene_data, additional_data, covariates, y = batch
+            covariates = covariates.to(device)
+        else:
+            gene_data, additional_data, y = batch
+            
         gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
-        y_hat, y_hats = model(gene_data, additional_data)
+        
+        if model.add_gradient_reversal_layer:
+            y_hat, y_hats, cov_preds = model(gene_data, additional_data)
+        else:
+            y_hat, y_hats = model(gene_data, additional_data)
+            
         if model.loss_weight is not None:
             weight = model.loss_weight.to(device)
             weight_ = weight[y.data.view(-1).long()].view_as(y)
@@ -456,6 +482,10 @@ def validate(model, dataloader):
         else:
             aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
             loss = model.loss_fn(y_hat, y) + sum(aux_losses)
+            
+        if model.add_gradient_reversal_layer:
+            loss += model.calculate_adv_loss(cov_preds, covariates)
+            
         running_loss += loss.item()
         loss.backward()
     loss = running_loss / len(dataloader.dataset)
@@ -622,18 +652,23 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
 
 
 
-def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3,
+def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, covariates_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3,
         weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False,
         fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[],
         add_gradient_reversal_layer=False, alpha=1.0):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
-    train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, gene_set, additional_data,
+    train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, gene_set, additional_data, covariates_data,
                                                                   test_split, seed, train_inds, test_inds,
                                                                   shuffle_labels=shuffle_labels)
     
     reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes(), pathways_to_drop=drop_pathways)
+
+    if covariates_data is not None:
+        n_covar = covariates_data.shape[1]
+    else:
+        n_covar = 8
 
     model = PNET_NN(reactome_network=reactome_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,

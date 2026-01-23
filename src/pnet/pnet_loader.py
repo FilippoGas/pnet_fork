@@ -9,7 +9,7 @@ import os
 # DataLoader object for pytorch. Constructing single loader for all data input modalities.
 
 class PnetDataset(Dataset):
-    def __init__(self, genetic_data, target, indicies, additional_data=None, gene_set=None):
+    def __init__(self, genetic_data, target, indicies, additional_data=None, gene_set=None, covariates_data=None):
         """
         DataLoader initialization, builds object for pytorch data loading. Handles concatenantion of different
         genetic modalities, connection to target and batching.
@@ -43,6 +43,7 @@ class PnetDataset(Dataset):
         self.x = torch.tensor(self.input_df.values, dtype=torch.float)
         self.y = torch.tensor(self.target.values, dtype=torch.float)
         self.additional = torch.tensor(self.additional_data.values, dtype=torch.float)
+        self.covariates_data = covariates_data
 
     def __len__(self):
         return self.input_df.shape[0]
@@ -51,7 +52,19 @@ class PnetDataset(Dataset):
         x = self.x[index]
         y = self.y[index]
         additional = self.additional[index]
-        return x, additional, y
+
+        # Prepare covariates tensor
+        if self.covariates_data is not None:
+            cov_sample = self.covariates_data.iloc[index].values
+            cov_data = torch.tensor(cov_sample).float()
+        else:
+            # If there are no covariates return empty tensor
+            cov_data = torch.tensor([]).float()
+
+        if self.covariates_data is not None:
+            return x, additional, cov_data, y
+        else:
+            return x, additional, y
 
     def get_genes(self):
         """
@@ -68,7 +81,7 @@ class PnetDataset(Dataset):
         print('Found {} overlapping genes'.format(len(genes)))
         return genes
 
-    def unpack_input(self):
+    def     unpack_input(self):
         """
         Unpacks data modalities into one joint pd.DataFrame. Suffixing gene names by their modality name.
         :return: pd.DataFrame; containing n*m columns, where n is the number of modalities and m the number of genes
@@ -90,7 +103,7 @@ class PnetDataset(Dataset):
         df.to_csv(path, sep=',',index=False)
 
 
-def get_indicies(genetic_data, target, additional_data=None):
+def get_indicies(genetic_data, target, additional_data=None, covariates_data=None):
     """
     Generates a list of indicies which are present in all data modalities. Drops duplicated indicies.
     :param genetic_data: Dict(str: pd.DataFrame); requires a dict containing a pd.DataFrame for each data modality
@@ -108,12 +121,14 @@ def get_indicies(genetic_data, target, additional_data=None):
     ind_sets.append(target.index.drop_duplicates(keep=False))
     if additional_data is not None:
         ind_sets.append(additional_data.index.drop_duplicates(keep=False))
+    if covariates_data is not None:
+        ind_sets.append(covariates_data.index.drop_duplicates(keep=False))
     inds = list(set.intersection(*ind_sets))
     print('Found {} overlapping indicies'.format(len(inds)))
     return inds
 
 
-def generate_train_test(genetic_data, target, gene_set=None, additional_data=None, test_split=0.3, seed=None,
+def generate_train_test(genetic_data, target, gene_set=None, additional_data=None, covariates_data=None, test_split=0.3, seed=None,
                         train_inds=None, test_inds=None, collinear_features=0, shuffle_labels=False):
     """
     Takes all data modalities to be used and generates a train and test DataSet with a given split.
@@ -129,7 +144,7 @@ def generate_train_test(genetic_data, target, gene_set=None, additional_data=Non
     :return:
     """
     print('Given {} Input modalities'.format(len(genetic_data)))
-    inds = get_indicies(genetic_data, target, additional_data)
+    inds = get_indicies(genetic_data, target, additional_data, covariates_data)
     random.seed(seed)
     random.shuffle(inds)
     if train_inds and test_inds:
@@ -145,9 +160,9 @@ def generate_train_test(genetic_data, target, gene_set=None, additional_data=Non
         test_inds = inds[int((len(inds) + 1) * (1 - test_split)):]
         train_inds = inds[:int((len(inds) + 1) * (1 - test_split))]
     print('Initializing Train Dataset')
-    train_dataset = PnetDataset(genetic_data, target, train_inds, additional_data=additional_data, gene_set=gene_set)
+    train_dataset = PnetDataset(genetic_data, target, train_inds, additional_data=additional_data, gene_set=gene_set, covariates_data=covariates_data)
     print('Initializing Test Dataset')
-    test_dataset = PnetDataset(genetic_data, target, test_inds, additional_data=additional_data, gene_set=gene_set)
+    test_dataset = PnetDataset(genetic_data, target, test_inds, additional_data=additional_data, gene_set=gene_set, covariates_data=covariates_data)
     
     # Positive control: Replace a gene's values with values collinear to the target
     train_dataset, test_dataset = add_collinear(train_dataset, test_dataset, collinear_features)
