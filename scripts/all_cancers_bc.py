@@ -55,7 +55,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples)):
 
     model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(
         genetic_data, tumor_types, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
-        batch_size=64, epochs=3000, early_stopping=True, train_inds=train_sample,
+        batch_size=128, epochs=3000, early_stopping=True, train_inds=train_sample,
         test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes
     )
 

@@ -159,8 +159,8 @@ def generate_train_test(genetic_data, target, gene_set=None, additional_data=Non
 
 
 def to_dataloader(train_dataset, test_dataset, batch_size):
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4,)
-    val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4,)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory = True, prefetch_factor=2, persistent_workers=True)
+    val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory = True, prefetch_factor=2, persistent_workers=True)
     return train_loader, val_loader
 
 def add_collinear(train_dataset, test_dataset, collinear_features):
