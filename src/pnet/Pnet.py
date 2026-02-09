@@ -56,13 +56,13 @@ class GradientReversal(Function):
     @staticmethod
     def forward(ctx, x, alpha):
         # Save x and alpha (strength of the reversal) for the backward pass 
-        ctx.save_for_backwards(x)
+        ctx.save_for_backward(x)
         ctx.alpha = alpha
         # Pass x through without doing anything
         return x
     
     @staticmethod
-    def backwards(ctx, grad_output):
+    def backward(ctx, grad_output):
         # grad_output is the gradient coming back from the adversary (the part of the network learning the covariates),
         # we need to reverse its sign and scale it for alpha.
         # Returns None as second parameter (alpha) as it is a fixed number, not a parameter, so it does not need gradient
