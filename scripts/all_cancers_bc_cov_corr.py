@@ -45,6 +45,9 @@ scaler = StandardScaler()
 cols_to_norm = ['Age', 'PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6']
 covariates[cols_to_norm] = scaler.fit_transform(covariates[cols_to_norm])
 
+# Map categorical sex variable to 0/1
+covariates['Sex'] = covariates['Sex'].map({'Male': 1, 'Female': 0})
+
 # Chose gene list to operate on
 if gene_list == "cancer_genes":
     # Load cancer genes list
