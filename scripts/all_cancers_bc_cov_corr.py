@@ -22,23 +22,21 @@ input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_
 cancer_genes_list   = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
 output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+gene_list+"/"+tumor_type+"/plots/"+score_type+"/"+agg_func
 tumor_types_path    = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
-# Covariates must be in the order PC1-6, age, sex
-covariates_path     = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/TCGA_sample_covariates.csv"
+covariates_path     = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/TCGA_sample_covariates.csv" # Covariates must be in the order PC1-6, age, sex
 
 # Load scores and sample data
 scores_hap1, scores_hap2 = util.load_hap_scores(input_dir, agg_func, score_type)
 genetic_data = {'scores_hap1':scores_hap1,
                 'scores_hap2':scores_hap2}
-
 # Load tumor types
 tumor_types =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
-
 # Load covariates
-covariates = pd.read_csv(covariates_path, sep=",").set_index("sample")
+covariates = pd.read_csv(covariates_path, sep=",").dropna().set_index("sample")
 
 # Align samples: Only keep samples present in your genetic data
-common_samples = genetic_data.index.intersection(covariates.index)
-genetic_data = genetic_data.loc[common_samples]
+common_samples = list(genetic_data['scores_hap1'].index.intersection(covariates.index))
+genetic_data['scores_hap1'] = genetic_data['scores_hap1'].loc[common_samples]
+genetic_data['scores_hap2'] = genetic_data['scores_hap2'].loc[common_samples]
 tumor_types = tumor_types.loc[common_samples]
 covariates = covariates.loc[common_samples]
 
