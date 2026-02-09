@@ -686,7 +686,7 @@ def run(genetic_data, target, save_path=None, gene_set=None, additional_data=Non
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
                     input_dropout=input_dropout, aux_loss_weights=aux_loss_weights, add_gradient_reversal_layer=add_gradient_reversal_layer,
-                    alpha=alpha, n_covar=n_covar)
+                    alpha=alpha, n_covariates=n_covar)
     train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
                                              early_stopping)
