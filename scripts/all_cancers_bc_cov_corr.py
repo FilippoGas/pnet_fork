@@ -20,7 +20,7 @@ gene_list   = sys.argv[4]
 # Paths
 input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/aggregated_scores/"+score_type+"/"+agg_func+"/"
 cancer_genes_list   = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
-output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+gene_list+"/"+tumor_type+"/plots/"+score_type+"/"+agg_func
+output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers_covariates_correction/bc/"+gene_list+"/"+tumor_type+"/plots/"+score_type+"/"+agg_func
 tumor_types_path    = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
 covariates_path     = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/TCGA_sample_covariates.csv" # Covariates must be in the order PC1-6, age, sex
 
