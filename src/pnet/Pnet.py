@@ -87,7 +87,8 @@ class PNET_NN(pl.LightningModule):
         self.loss_weight = loss_weight
         self.aux_loss_weights = aux_loss_weights
         self.add_gradient_reversal_layer=add_gradient_reversal_layer
-        self.alpha = alpha # Gradient reversal coefficient
+        self.alpha = 0          # Gradient reversal coefficient start value
+        self.max_alpha = alpha  # Gradient reversal coefficient max value
         self.n_covariates = n_covariates
         if loss_fn is None:
             self.loss_fn = util.get_loss_function(task)
@@ -150,6 +151,16 @@ class PNET_NN(pl.LightningModule):
         )
         # Weighting of the different prediction layers:
         self.attn = nn.Linear(in_features=(self.num_pred_heads) * self.output_dim, out_features=self.output_dim)
+
+    def on_train_epoch_start(self):
+        """
+        Calculates alpha based on a schedule: 
+        alpha = 2 / (1 + exp(-10 * p)) - 1
+        where p is the progress from 0 to 1.
+        """
+        p = self.current_epoch / self.max_epochs
+        self.alpha = (2.0 / (1.0 + np.exp(-10 * p)) - 1.0) * self.max_alpha
+        self.log("alpha_evolution", self.alpha, on_step=False, on_epoch=True)
 
     def forward(self, x, additional_data):
         x = self.input_layer(x)
@@ -538,6 +549,9 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
     train_scores = []
     test_scores = []
     for epoch in range(epochs):
+        # Dynamically set alpha
+        if(hasattr(model, 'on_train_epoch_start')):
+            model.on_train_epoch_start()
         train_epoch_loss = fit(model, train_loader, optimizer)
         test_epoch_loss = validate(model, test_loader)
         train_scores.append(train_epoch_loss)
@@ -687,6 +701,8 @@ def run(genetic_data, target, save_path=None, gene_set=None, additional_data=Non
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
                     input_dropout=input_dropout, aux_loss_weights=aux_loss_weights, add_gradient_reversal_layer=add_gradient_reversal_layer,
                     alpha=alpha, n_covariates=n_covar)
+    # Set max_epochs used by the alpha scheduler 
+    model.max_epochs = epochs
     train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
                                              early_stopping)
