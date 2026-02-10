@@ -131,8 +131,8 @@ if all_layer_importance_scores and all_layer_importance_scores[0]:
         avg_layer_score.to_csv(f"{output_dir}/layer_{i}_importances.csv")
         avg_layer_importance_scores.append(avg_layer_score)
 
-layer_list          = [avg_gene_feature_importances, avg_additional_feature_importances, avg_gene_importances] + avg_layer_importance_scores
-layer_list_names    = ['gene_feature', 'gene_feature', 'gene'] + [f'layer_{i}' for i in range(len(avg_layer_importance_scores))]
+layer_list          = [avg_gene_importances] + avg_layer_importance_scores
+layer_list_names    = ['gene'] + [f'layer_{i}' for i in range(len(avg_layer_importance_scores))]
 layer_list_dict     = dict(zip(layer_list_names, layer_list))
 
 # Plot Sankey
