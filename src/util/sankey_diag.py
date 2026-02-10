@@ -59,7 +59,8 @@ class SankeyDiag:
     def format_importance_scores(self, layer_list_dict):
         all_imps = pd.DataFrame(columns=['Importance', 'Layer'])
         for l in layer_list_dict:
-            df_imps = layer_list_dict[l].reset_index().melt(id_vars='index', var_name='Gene/Pathway', value_name='Importance').rename(columns={'index': 'Sample'})
+            layer_list_dict[l] = layer_list_dict[l].rename(columns={layer_list_dict[l].columns[0]: 'Sample'})
+            df_imps = layer_list_dict[l].melt(id_vars='Sample', var_name='Gene/Pathway', value_name='Importance')
             df_imps['Layer'] = l
             all_imps = pd.concat([all_imps, df_imps])
         return all_imps
@@ -72,7 +73,7 @@ class SankeyDiag:
             grouped_imps = imps_w_target.groupby(['Gene/Pathway', 'Layer', response]).mean().diff().abs()
             grouped_imps = grouped_imps.query('{} == 1'.format(response)).reset_index()
         else:
-            grouped_imps = pd.DataFrame(self.all_imps.groupby(['Gene/Pathway', 'Layer']).mean().abs().reset_index())
+            grouped_imps = pd.DataFrame(self.all_imps.groupby(['Gene/Pathway', 'Layer'])["Importance"].mean().abs().reset_index())
         return grouped_imps
     
     
@@ -80,7 +81,7 @@ class SankeyDiag:
         layer_normalized_imps = pd.Series(dtype=float)
         for l in self.grouped_imps['Layer'].unique():
             normalized = NormalizeData(self.grouped_imps[self.grouped_imps['Layer']==l]['Importance'])
-            layer_normalized_imps = layer_normalized_imps.append(normalized)
+            layer_normalized_imps = pd.concat([layer_normalized_imps, normalized])
         self.grouped_imps['Importance'] = layer_normalized_imps
 
         
@@ -280,7 +281,6 @@ class SankeyDiag:
 
         fig.update_layout(font_size=10)
         fig.write_html(savepath)
-        fig.show()
         return fig
     
     
