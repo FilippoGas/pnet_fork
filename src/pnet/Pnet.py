@@ -508,9 +508,6 @@ def validate(model, dataloader):
             else:
                 aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
                 loss = model.loss_fn(y_hat, y) + sum(aux_losses)
-                
-            if model.add_gradient_reversal_layer:
-                loss += model.calculate_adv_loss(cov_preds, covariates)
             running_loss += loss.item()
     loss = running_loss / len(dataloader.dataset)
     return loss
