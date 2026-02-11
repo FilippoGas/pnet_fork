@@ -27,61 +27,92 @@ class PnetDataset(Dataset):
             assert isinstance(inp, str), f"input data keys expected to be str, got {type(inp)}"
             assert isinstance(genetic_data[inp], pd.DataFrame), f"input data values expected to be a dict, got" \
                                                                 f" {type(genetic_data[inp])}"
-        self.genetic_data = genetic_data
-        self.target = target
-        self.gene_set = gene_set
-        self.altered_inputs = []
         self.inds = indicies
+        
+        temp_input_df, self.genes = self._unpack_and_align_genes(genetic_data, gene_set)
+        
+        self.feature_names = temp_input_df.columns
+        self.sample_names = temp_input_df.index
+
+        self.x = torch.tensor(temp_input_df.values, dtype=torch.float)
+        del temp_input_df
+
+        target_subset = target.loc[self.inds]
+        self.y = torch.tensor(target_subset.values, dtype=torch.float)
+        
         if additional_data is not None:
-            self.additional_data = additional_data.loc[self.inds]
+            add_subset = additional_data.loc[self.inds]
+            self.additional = torch.tensor(add_subset.values, dtype=torch.float)
+            self.additional_data_columns = add_subset.columns
+            self.additional_data_index = add_subset.index
         else:
-            self.additional_data = pd.DataFrame(index=self.inds)    # create empty dummy dataframe if no additional data
-        self.target = self.target.loc[self.inds]
-        self.genes = self.get_genes()
-        self.input_df = self.unpack_input()
-        assert self.input_df.index.equals(self.target.index)
-        self.x = torch.tensor(self.input_df.values, dtype=torch.float)
-        self.y = torch.tensor(self.target.values, dtype=torch.float)
-        self.additional = torch.tensor(self.additional_data.values, dtype=torch.float)
-        self.covariates_data = covariates_data
+            self.additional = torch.tensor(np.zeros((len(self.inds), 0)), dtype=torch.float)
+            self.additional_data_columns = []
+            self.additional_data_index = self.inds
+
+        if covariates_data is not None:
+            cov_subset = covariates_data.loc[self.inds].values
+            self.covariates_tensor = torch.tensor(cov_subset).float()
+        else:
+            self.covariates_tensor = None
+        
+    def _unpack_and_align_genes(self, genetic_data, gene_set):
+        local_genetic_data = {k: v.loc[:, ~v.columns.duplicated()].copy() for k, v in genetic_data.items()}
+        
+        gene_sets = [set(df.columns) for df in local_genetic_data.values()]
+        if gene_set:
+            gene_sets.append(set(gene_set))
+        genes = list(set.intersection(*gene_sets))
+        print(f'Found {len(genes)} overlapping genes')
+
+        input_df = pd.DataFrame(index=self.inds)
+        for inp, df in local_genetic_data.items():
+            temp_df = df[genes]
+            temp_df = temp_df.add_suffix(f'_{inp}')
+            input_df = input_df.join(temp_df, how='inner')
+            
+        print(f'generated input DataFrame of size {input_df.shape}')
+        return input_df.loc[self.inds], genes
+    
+    @property
+    def additional_data(self):
+        class Wrapper:
+            def __init__(self, tensor, cols, idx):
+                self.shape = tensor.shape
+                self.columns = cols
+                self.index = idx
+                
+        return Wrapper(self.additional, self.additional_data_columns, self.additional_data_index)
+    
+    @property
+    def input_df(self):
+        """
+        Mimics the input DataFrame to satisfy Pnet.py's interpretation methods.
+        Returns an object with .index and .columns.
+        """
+        class MetaWrapper:
+            def __init__(self, idx, cols):
+                self.index = idx
+                self.columns = cols
+        return MetaWrapper(self.sample_names, self.feature_names)
 
     def __len__(self):
-        return self.input_df.shape[0]
+        return len(self.inds)
 
     def __getitem__(self, index):
         x = self.x[index]
         y = self.y[index]
         additional = self.additional[index]
 
-        # Prepare covariates tensor
-        if self.covariates_data is not None:
-            cov_sample = self.covariates_data.iloc[index].values
-            cov_data = torch.tensor(cov_sample).float()
-        else:
-            # If there are no covariates return empty tensor
-            cov_data = torch.tensor([]).float()
-
-        if self.covariates_data is not None:
-            return x, additional, cov_data, y
+        if self.covariates_tensor is not None:
+            return x, additional, self.covariates_tensor[index], y
         else:
             return x, additional, y
 
     def get_genes(self):
-        """
-        Generate list of genes which are present in all data modalities and in the list of genes to be considered
-        :return: List(str); List of gene names
-        """
-        # drop duplicated columns:
-        for inp in self.genetic_data:
-            self.genetic_data[inp] = self.genetic_data[inp].loc[:, ~self.genetic_data[inp].columns.duplicated()].copy()
-        gene_sets = [set(self.genetic_data[inp].columns) for inp in self.genetic_data]
-        if self.gene_set:
-            gene_sets.append(self.gene_set)
-        genes = list(set.intersection(*gene_sets))
-        print('Found {} overlapping genes'.format(len(genes)))
-        return genes
+        return self.genes
 
-    def     unpack_input(self):
+    def unpack_input(self):
         """
         Unpacks data modalities into one joint pd.DataFrame. Suffixing gene names by their modality name.
         :return: pd.DataFrame; containing n*m columns, where n is the number of modalities and m the number of genes
@@ -174,8 +205,8 @@ def generate_train_test(genetic_data, target, gene_set=None, additional_data=Non
 
 
 def to_dataloader(train_dataset, test_dataset, batch_size):
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory = True, prefetch_factor=2, persistent_workers=True)
-    val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory = True, prefetch_factor=2, persistent_workers=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory = True, prefetch_factor=2, persistent_workers=True)
+    val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory = True, prefetch_factor=2, persistent_workers=True)
     return train_loader, val_loader
 
 def add_collinear(train_dataset, test_dataset, collinear_features):
