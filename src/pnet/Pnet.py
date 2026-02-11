@@ -160,7 +160,7 @@ class PNET_NN(pl.LightningModule):
         """
         p = self.current_epoch / self.max_epochs
         self.alpha = (2.0 / (1.0 + np.exp(-10 * p)) - 1.0) * self.max_alpha
-        self.log("alpha_evolution", self.alpha, on_step=False, on_epoch=True)
+        print(f"alpha_evolution: {self.alpha}, on_epoch: P{self.current_epoch}\n")
 
     def forward(self, x, additional_data):
         x = self.input_layer(x)
