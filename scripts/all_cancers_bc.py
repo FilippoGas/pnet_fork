@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 from pnet import Pnet
 from util import util, sankey_diag
 
@@ -40,7 +40,7 @@ else:
 
 samples = np.array(scores_hap1.index.tolist())
 n_splits = 5
-kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
 all_gene_feature_importances = []
 all_additional_feature_importances = []
