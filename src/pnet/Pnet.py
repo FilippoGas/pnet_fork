@@ -484,6 +484,7 @@ def validate(model, dataloader):
     running_loss = 0.0
     with torch.no_grad():
         for batch in dataloader:
+            covariates = None
             if len(batch)==4:
                 gene_data, additional_data, covariates, y = batch
                 covariates = covariates.to(device)
@@ -510,7 +511,6 @@ def validate(model, dataloader):
                 
             if model.add_gradient_reversal_layer:
                 loss += model.calculate_adv_loss(cov_preds, covariates)
-                
             running_loss += loss.item()
     loss = running_loss / len(dataloader.dataset)
     return loss
@@ -555,9 +555,7 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
         if(hasattr(model, 'on_train_epoch_start')):
             model.on_train_epoch_start()
         train_epoch_loss = fit(model, train_loader, optimizer)
-        print("Fit done\n")
         test_epoch_loss = validate(model, test_loader)
-        print("Validate done\n")
         train_scores.append(train_epoch_loss)
         test_scores.append(test_epoch_loss)
         if lr_scheduler:
@@ -571,7 +569,6 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
                 print('Hit early stopping criteria')
                 model.load_state_dict(torch.load(save_path))
                 break
-        print("Done epoch\n")
 
     return model, train_scores, test_scores
 
