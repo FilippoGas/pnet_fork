@@ -87,8 +87,9 @@ class PNET_NN(pl.LightningModule):
         self.loss_weight = loss_weight
         self.aux_loss_weights = aux_loss_weights
         self.add_gradient_reversal_layer=add_gradient_reversal_layer
-        self.alpha = 0          # Gradient reversal coefficient start value
+        self.alpha = 0.0          # Gradient reversal coefficient start value
         self.max_alpha = alpha  # Gradient reversal coefficient max value
+        self.manual_current_epoch = 0
         self.n_covariates = n_covariates
         if loss_fn is None:
             self.loss_fn = util.get_loss_function(task)
@@ -158,9 +159,9 @@ class PNET_NN(pl.LightningModule):
         alpha = 2 / (1 + exp(-10 * p)) - 1
         where p is the progress from 0 to 1.
         """
-        p = self.current_epoch / self.max_epochs
-        self.alpha = (2.0 / (1.0 + np.exp(-10 * p)) - 1.0) * self.max_alpha
-        print(f"alpha_evolution: {self.alpha}, on_epoch: P{self.current_epoch}\n")
+        p = self.manual_current_epoch / self.max_epochs
+        self.alpha = float((2.0 / (1.0 + np.exp(-10 * p)) - 1.0) * self.max_alpha)
+        print(f"alpha_evolution: {self.alpha}, on_epoch: P{self.manual_current_epoch}\n")
 
     def forward(self, x, additional_data):
         x = self.input_layer(x)
@@ -233,9 +234,9 @@ class PNET_NN(pl.LightningModule):
             adv_loss = self.calculate_adv_loss(cov_preds, covariates)
             # Combine, log and return
             total_loss = task_loss + adv_loss
-            self.log(who, "_total_loss", total_loss)
-            self.log(who, "_task_loss", task_loss)
-            self.log(who, "_adv_loss", adv_loss)
+            print(f"{who}, {total_loss}, {total_loss}")
+            print(f"{who}, {task_loss}, {task_loss}")
+            print(f"{who}, {adv_loss}, {adv_loss}")
             return total_loss
         else:
             # Unpack batch
@@ -244,7 +245,7 @@ class PNET_NN(pl.LightningModule):
             pred_y, _ = self(x, additional)
             # Compute loss
             loss = F.cross_entropy(pred_y, y, reduction='mean')
-            self.log(who + '_bce_loss', loss)
+            print(f"{who}_bce_loss, {loss}")
             return loss
     
     def predict_proba(self,  x, additional_data, threshold=0.5):
@@ -481,36 +482,36 @@ def validate(model, dataloader):
         device = torch.device('cpu')
     model.eval()
     running_loss = 0.0
-    for batch in dataloader:
-        if len(batch)==4:
-            gene_data, additional_data, covariates, y = batch
-            covariates = covariates.to(device)
-        else:
-            gene_data, additional_data, y = batch
+    with torch.no_grad():
+        for batch in dataloader:
+            if len(batch)==4:
+                gene_data, additional_data, covariates, y = batch
+                covariates = covariates.to(device)
+            else:
+                gene_data, additional_data, y = batch
+                
+            gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
             
-        gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
-        
-        if model.add_gradient_reversal_layer:
-            if covariates is None:
-                raise ValueError("Model expects gradient reversal but dataloader did not provide covariates")
-            y_hat, y_hats, cov_preds = model(gene_data, additional_data)
-        else:
-            y_hat, y_hats = model(gene_data, additional_data)
-            
-        if model.loss_weight is not None:
-            weight = model.loss_weight.to(device)
-            weight_ = weight[y.data.view(-1).long()].view_as(y)
-            aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
-        else:
-            aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = model.loss_fn(y_hat, y) + sum(aux_losses)
-            
-        if model.add_gradient_reversal_layer:
-            loss += model.calculate_adv_loss(cov_preds, covariates)
-            
-        running_loss += loss.item()
-        loss.backward()
+            if model.add_gradient_reversal_layer:
+                if covariates is None:
+                    raise ValueError("Model expects gradient reversal but dataloader did not provide covariates")
+                y_hat, y_hats, cov_preds = model(gene_data, additional_data)
+            else:
+                y_hat, y_hats = model(gene_data, additional_data)
+                
+            if model.loss_weight is not None:
+                weight = model.loss_weight.to(device)
+                weight_ = weight[y.data.view(-1).long()].view_as(y)
+                aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
+                loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
+            else:
+                aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
+                loss = model.loss_fn(y_hat, y) + sum(aux_losses)
+                
+            if model.add_gradient_reversal_layer:
+                loss += model.calculate_adv_loss(cov_preds, covariates)
+                
+            running_loss += loss.item()
     loss = running_loss / len(dataloader.dataset)
     return loss
 
@@ -524,6 +525,7 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
         device = torch.device('mps')
     else:
         device = torch.device('cpu')
+    model.max_epochs = epochs
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = StepLR(optimizer, step_size=30, gamma=lr)
@@ -545,15 +547,17 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
 
     early_stopper = util.EarlyStopper(save_path, patience=50, min_delta=0.01, verbose=verbose)
     best_model_state = None
-
     train_scores = []
     test_scores = []
     for epoch in range(epochs):
+        model.manual_current_epoch = epoch
         # Dynamically set alpha
         if(hasattr(model, 'on_train_epoch_start')):
             model.on_train_epoch_start()
         train_epoch_loss = fit(model, train_loader, optimizer)
+        print("Fit done\n")
         test_epoch_loss = validate(model, test_loader)
+        print("Validate done\n")
         train_scores.append(train_epoch_loss)
         test_scores.append(test_epoch_loss)
         if lr_scheduler:
@@ -567,6 +571,7 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
                 print('Hit early stopping criteria')
                 model.load_state_dict(torch.load(save_path))
                 break
+        print("Done epoch\n")
 
     return model, train_scores, test_scores
 
