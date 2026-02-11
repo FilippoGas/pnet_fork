@@ -29,6 +29,7 @@ genetic_data = {'scores_hap1':scores_hap1,
 
 # Load tumor types
 tumor_types =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
+tumor_types[tumor_types.columns[0]] = tumor_types[tumor_types.columns[0]].astype(int)
 
 # Chose gene list to operate on
 if gene_list == "cancer_genes":
@@ -38,7 +39,7 @@ else:
     # Select all genes in dataset
     selected_genes = list(scores_hap1.columns)
 
-samples = np.array(scores_hap1.index.tolist())
+samples = np.array(tumor_types.index.tolist())
 n_splits = 5
 kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
@@ -49,7 +50,7 @@ all_layer_importance_scores = []
 all_y_true = []
 all_pred_proba = []
 
-for fold, (train_index, test_index) in enumerate(kf.split(samples)):
+for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[tumor_types.columns[0]])):
     train_sample = samples[train_index].tolist()
     test_sample = samples[test_index].tolist()
 
