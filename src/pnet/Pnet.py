@@ -440,16 +440,14 @@ def fit(model, dataloader, optimizer):
     for batch in dataloader:
         if len(batch)==4:
             gene_data, additional_data, covariates, y = batch
-            covariates = covariates.to(device)
+            covariates = covariates.to(device, non_blocking = True)
         else:
             gene_data, additional_data, y = batch
             
-        gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
+        gene_data, additional_data, y = gene_data.to(device, non_blocking = True), additional_data.to(device, non_blocking = True), y.to(device, non_blocking = True)
         optimizer.zero_grad()
         
         if model.add_gradient_reversal_layer:
-            if covariates is None:
-                raise ValueError("Model expects gradient reversal but dataloader did not provide covariates")
             y_hat, y_hats, cov_preds = model(gene_data, additional_data)
         else:
             y_hat, y_hats = model(gene_data, additional_data)
