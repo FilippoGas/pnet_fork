@@ -342,11 +342,11 @@ def fit(model, dataloader, optimizer):
     running_loss = 0.0
     for batch in dataloader:
         gene_data, additional_data, y = batch
-        gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
+        gene_data, additional_data, y = gene_data.to(device, non_blocking = True), additional_data.to(device, non_blocking = True), y.to(device, non_blocking = True)
         optimizer.zero_grad()
         y_hat, y_hats = model(gene_data, additional_data)
         if model.loss_weight is not None:
-            weight = model.loss_weight.to(device)
+            weight = model.loss_weight.to(device, non_blocking = True)
             weight_ = weight[y.data.view(-1).long()].view_as(y)
             aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
             loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
@@ -369,20 +369,20 @@ def validate(model, dataloader):
         device = torch.device('cpu')
     model.eval()
     running_loss = 0.0
-    for batch in dataloader:
-        gene_data, additional_data, y = batch
-        gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
-        y_hat, y_hats = model(gene_data, additional_data)
-        if model.loss_weight is not None:
-            weight = model.loss_weight.to(device)
-            weight_ = weight[y.data.view(-1).long()].view_as(y)
-            aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
-        else:
-            aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = model.loss_fn(y_hat, y) + sum(aux_losses)
-        running_loss += loss.item()
-        loss.backward()
+    with torch.no_grad():
+        for batch in dataloader:
+            gene_data, additional_data, y = batch
+            gene_data, additional_data, y = gene_data.to(device, non_blocking = True), additional_data.to(device, non_blocking = True), y.to(device, non_blocking = True)
+            y_hat, y_hats = model(gene_data, additional_data)
+            if model.loss_weight is not None:
+                weight = model.loss_weight.to(device, non_blocking = True)
+                weight_ = weight[y.data.view(-1).long()].view_as(y)
+                aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
+                loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
+            else:
+                aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
+                loss = model.loss_fn(y_hat, y) + sum(aux_losses)
+            running_loss += loss.item()
     loss = running_loss / len(dataloader.dataset)
     return loss
 
