@@ -161,7 +161,7 @@ class PNET_NN(pl.LightningModule):
         """
         p = self.manual_current_epoch / self.max_epochs
         self.alpha = float((2.0 / (1.0 + np.exp(-10 * p)) - 1.0) * self.max_alpha)
-        print(f"alpha_evolution: {self.alpha}, on_epoch: P{self.manual_current_epoch}\n")
+        print(f"alpha_evolution: {self.alpha}, on_epoch: P{self.manual_current_epoch}")
 
     def forward(self, x, additional_data):
         x = self.input_layer(x)
@@ -453,7 +453,7 @@ def fit(model, dataloader, optimizer):
             y_hat, y_hats = model(gene_data, additional_data)
             
         if model.loss_weight is not None:
-            weight = model.loss_weight.to(device)
+            weight = model.loss_weight.to(device, non_blocking = True)
             weight_ = weight[y.data.view(-1).long()].view_as(y)
             aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
             loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
@@ -485,11 +485,11 @@ def validate(model, dataloader):
             covariates = None
             if len(batch)==4:
                 gene_data, additional_data, covariates, y = batch
-                covariates = covariates.to(device)
+                covariates = covariates.to(device, non_blocking = True)
             else:
                 gene_data, additional_data, y = batch
                 
-            gene_data, additional_data, y = gene_data.to(device), additional_data.to(device), y.to(device)
+            gene_data, additional_data, y = gene_data.to(device, non_blocking = True), additional_data.to(device, non_blocking = True), y.to(device, non_blocking = True)
             
             if model.add_gradient_reversal_layer:
                 if covariates is None:
@@ -499,7 +499,7 @@ def validate(model, dataloader):
                 y_hat, y_hats = model(gene_data, additional_data)
                 
             if model.loss_weight is not None:
-                weight = model.loss_weight.to(device)
+                weight = model.loss_weight.to(device, non_blocking = True)
                 weight_ = weight[y.data.view(-1).long()].view_as(y)
                 aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
                 loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
