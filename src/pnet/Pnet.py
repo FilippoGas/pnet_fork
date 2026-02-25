@@ -462,7 +462,7 @@ def fit(model, dataloader, optimizer):
             loss = model.loss_fn(y_hat, y) + sum(aux_losses)
             
         if model.add_gradient_reversal_layer:
-            loss += model.calculate_adv_loss(cov_preds, covariates)
+            loss += model.alpha*model.calculate_adv_loss(cov_preds, covariates)
             
         running_loss += loss.item()
         loss.backward()
