@@ -42,10 +42,11 @@ tumor_types = tumor_types.loc[common_samples]
 covariates = covariates.loc[common_samples]
 
 # It is possible that in some tumors with very low positive class no samples have information about covariates. Tuning is not possible in this case,
-# exit and print error
+# exit
 if len(tumor_types[tumor_types.columns[0]].unique()) == 1:
     print("\nNo positive samples after sample intersection between genetic data and covariates... exiting.\n")
     exit(0)
+
 # Normalize covariates
 scaler = StandardScaler()
 cols_to_norm = ['Age', 'PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6']
@@ -63,7 +64,7 @@ else:
     selected_genes = list(scores_hap1.columns)
 
 samples = np.array(tumor_types.index.tolist())
-n_splits = 2
+n_splits = 5
 kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)  
 
 all_gene_feature_importances = []
@@ -74,6 +75,7 @@ all_y_true = []
 all_pred_proba = []
 
 for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[tumor_types.columns[0]])):
+    print(f"Fold: {fold}")
     train_sample = samples[train_index].tolist()
     test_sample = samples[test_index].tolist()
 
