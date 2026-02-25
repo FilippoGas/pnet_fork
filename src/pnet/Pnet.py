@@ -233,7 +233,7 @@ class PNET_NN(pl.LightningModule):
             task_loss = F.cross_entropy(pred_y, y, reduction='mean')    
             adv_loss = self.calculate_adv_loss(cov_preds, covariates)
             # Combine, log and return
-            total_loss = task_loss + adv_loss
+            total_loss = task_loss + self.alpha*adv_loss
             print(f"{who}, {total_loss}, {total_loss}")
             print(f"{who}, {task_loss}, {task_loss}")
             print(f"{who}, {adv_loss}, {adv_loss}")
