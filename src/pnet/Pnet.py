@@ -436,7 +436,8 @@ def fit(model, dataloader, optimizer):
     else:
         device = torch.device('cpu')
     model.train()
-    running_loss = 0.0
+    running_main_loss = 0.0
+    running_adv_loss = 0.0
     for batch in dataloader:
         if len(batch)==4:
             gene_data, additional_data, covariates, y = batch
@@ -456,19 +457,26 @@ def fit(model, dataloader, optimizer):
             weight = model.loss_weight.to(device, non_blocking = True)
             weight_ = weight[y.data.view(-1).long()].view_as(y)
             aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
+            main_loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
         else:
             aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = model.loss_fn(y_hat, y) + sum(aux_losses)
+            main_loss = model.loss_fn(y_hat, y) + sum(aux_losses)
             
         if model.add_gradient_reversal_layer:
-            loss += model.alpha*model.calculate_adv_loss(cov_preds, covariates)
+            main_loss += model.alpha * model.calculate_adv_loss(cov_preds, covariates)
+            adv_loss = model.calculate_adv_loss(cov_preds, covariates)
+            running_adv_loss += adv_loss.item()
             
-        running_loss += loss.item()
-        loss.backward()
+        running_main_loss += main_loss.item()
+        main_loss.backward()
         optimizer.step()
-    train_loss = running_loss/len(dataloader.dataset)
-    return train_loss
+    
+    main_loss = running_main_loss / len(dataloader.dataset)
+    
+    if model.add_gradient_reversal_layer:
+        adv_loss = running_adv_loss / len(dataloader.dataset)
+        return main_loss, adv_loss
+    return main_loss
 
 
 def validate(model, dataloader):
@@ -479,7 +487,8 @@ def validate(model, dataloader):
     else:
         device = torch.device('cpu')
     model.eval()
-    running_loss = 0.0
+    running_main_loss = 0.0
+    running_adv_loss = 0.0
     with torch.no_grad():
         for batch in dataloader:
             covariates = None
@@ -502,13 +511,23 @@ def validate(model, dataloader):
                 weight = model.loss_weight.to(device, non_blocking = True)
                 weight_ = weight[y.data.view(-1).long()].view_as(y)
                 aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-                loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
+                main_loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
             else:
                 aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-                loss = model.loss_fn(y_hat, y) + sum(aux_losses)
-            running_loss += loss.item()
-    loss = running_loss / len(dataloader.dataset)
-    return loss
+                main_loss = model.loss_fn(y_hat, y) + sum(aux_losses)
+            
+            running_main_loss += main_loss.item()
+            
+            if model.add_gradient_reversal_layer:
+                adv_loss = model.calculate_adv_loss(cov_preds, covariates)
+                running_adv_loss += adv_loss.item()
+                
+    main_loss = running_main_loss / len(dataloader.dataset)
+    
+    if model.add_gradient_reversal_layer:
+        adv_loss = running_adv_loss / len(dataloader.dataset)
+        return main_loss, adv_loss
+    return main_loss
 
 
 def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_decay=1e-4, epochs=300, verbose=False,
@@ -540,7 +559,13 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
         atexit.register(lambda: os.path.exists(temp_dir) and __import__('shutil').rmtree(temp_dir))
         warnings.warn(f"No save_path provided for early stopping. Using temporary path: {save_path}")
 
-    early_stopper = util.EarlyStopper(save_path, patience=50, min_delta=0.01, verbose=verbose)
+    early_stopper = util.EarlyStopper(save_path, patience=150, min_delta=0.01, verbose=verbose)
+    adv_early_stopper = None
+    min_epochs = 100
+    
+    if model.add_gradient_reversal_layer:
+        adv_early_stopper = util.AdversaryEarlyStopper(save_path + '_adv', patience=50, min_delta=0.001, verbose=verbose)
+        
     best_model_state = None
     train_scores = []
     test_scores = []
@@ -549,21 +574,42 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
         # Dynamically set alpha
         if(hasattr(model, 'on_train_epoch_start')):
             model.on_train_epoch_start()
-        train_epoch_loss = fit(model, train_loader, optimizer)
-        test_epoch_loss = validate(model, test_loader)
+        
+        if model.add_gradient_reversal_layer:
+            train_epoch_loss, train_adv_loss = fit(model, train_loader, optimizer)
+            test_epoch_loss, test_adv_loss = validate(model, test_loader)
+        else:
+            train_epoch_loss = fit(model, train_loader, optimizer)
+            test_epoch_loss = validate(model, test_loader)
+            
         train_scores.append(train_epoch_loss)
         test_scores.append(test_epoch_loss)
+        
         if lr_scheduler:
             scheduler.step()
         if verbose:
             print(f"Epoch {epoch + 1} of {epochs}")
             print("Train Loss: {}".format(train_epoch_loss))
             print("Test Loss: {}".format(test_epoch_loss))
+            if model.add_gradient_reversal_layer:
+                print("Test Adv Loss: {}".format(test_adv_loss))
+                
         if early_stopping:
-            if early_stopper.early_stop(test_epoch_loss, model):
-                print('Hit early stopping criteria')
+            main_stop = early_stopper.early_stop(test_epoch_loss, model)
+            adv_stop = False
+            if adv_early_stopper is not None:
+                adv_stop = adv_early_stopper.early_stop(test_adv_loss, model)
+            
+            if epoch >= min_epochs and main_stop and adv_stop:
+                print('Hit early stopping criteria (both main and adversary)')
                 model.load_state_dict(torch.load(save_path))
                 break
+            elif adv_early_stopper is None and main_stop:
+                print('Hit early stopping criteria (main task only, no adversary)')
+                model.load_state_dict(torch.load(save_path))
+                break
+            elif epoch >= min_epochs and main_stop and not adv_stop:
+                print(f'Main task early stopped at epoch {epoch}, but adversary still improving')
 
     return model, train_scores, test_scores
 
