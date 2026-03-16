@@ -11,7 +11,7 @@ from pnet import Pnet
 from util import util, sankey_diag
 
 # Read params
-agg_func    = sys.argv[1] # Function used to aggregate transcript scores into gene scores
+agg_func    = sys.argv[1]
 score_type  = sys.argv[2]
 tumor_type  = sys.argv[3]
 gene_list   = sys.argv[4]
