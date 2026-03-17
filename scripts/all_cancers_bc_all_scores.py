@@ -75,23 +75,23 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
     all_layer_importance_scores.append(results['layer_importance_scores'])
 
 # Aggregate and save final results
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+if not os.path.exists(output_dir+"_shuffled_labels_run"):
+    os.makedirs(output_dir+"_shuffled_labels_run")
 
 # Average importance scores and folds
 avg_gene_feature_importances = pd.concat(all_gene_feature_importances).groupby(level=0).mean()
 avg_additional_feature_importances = pd.concat(all_additional_feature_importances).groupby(level=0).mean()
 avg_gene_importances = pd.concat(all_gene_importances).groupby(level=0).mean()
 
-avg_gene_feature_importances.to_csv(f"{output_dir}/gene_feature_importances_shuffle.csv")
-avg_additional_feature_importances.to_csv(f"{output_dir}/additional_feature_importances_shuffle.csv")
-avg_gene_importances.to_csv(f"{output_dir}/gene_importances_shuffle.csv")
+avg_gene_feature_importances.to_csv(f"{output_dir+"_shuffled_labels_run"}/gene_feature_importances.csv")
+avg_additional_feature_importances.to_csv(f"{output_dir+"_shuffled_labels_run"}/additional_feature_importances.csv")
+avg_gene_importances.to_csv(f"{output_dir+"_shuffled_labels_run"}/gene_importances.csv")
 
 if all_layer_importance_scores and all_layer_importance_scores[0]:
     for i in range(len(all_layer_importance_scores[0])):
         layer_scores = [fold_scores[i] for fold_scores in all_layer_importance_scores]
         avg_layer_score = pd.concat(layer_scores).groupby(level=0).mean()
-        avg_layer_score.to_csv(f"{output_dir}/layer_{i}_importances_shuffle.csv")
+        avg_layer_score.to_csv(f"{output_dir+"_shuffled_labels_run"}/layer_{i}_importances.csv")
 
 # Run P-NET on real labels
 
