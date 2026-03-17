@@ -40,7 +40,61 @@ else:
     # Select all genes in dataset
     selected_genes = list(scores_hap1.columns)
 
+# Get samples list
 samples = np.array(tumor_types.index.tolist())
+
+# Run P-NET on shuffled labels and save layer importances 
+# to compute differential importance for each node in each layer
+n_splits = 2
+kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+all_gene_feature_importances = []
+all_additional_feature_importances = []
+all_gene_importances = []
+all_layer_importance_scores = []
+
+for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[tumor_types.columns[0]])):
+    train_sample = samples[train_index].tolist()
+    test_sample = samples[test_index].tolist()
+
+    model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(
+        genetic_data, tumor_types, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
+        batch_size=128, epochs=3000, early_stopping=True, train_inds=train_sample,
+        test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes, shuffle_labels=True
+    )
+    # Perform evaluation, generate plots and importances csv and save
+    plt.clf()
+    results = Pnet.evaluate_and_interpret(
+        model,
+        test_dataset,
+        tumor_types.columns.values
+    )
+    all_gene_feature_importances.append(results['gene_feature_importances'])
+    all_additional_feature_importances.append(results['additional_feature_importances'])
+    all_gene_importances.append(results['gene_importances'])
+    all_layer_importance_scores.append(results['layer_importance_scores'])
+
+# Aggregate and save final results
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+# Average importance scores and folds
+avg_gene_feature_importances = pd.concat(all_gene_feature_importances).groupby(level=0).mean()
+avg_additional_feature_importances = pd.concat(all_additional_feature_importances).groupby(level=0).mean()
+avg_gene_importances = pd.concat(all_gene_importances).groupby(level=0).mean()
+
+avg_gene_feature_importances.to_csv(f"{output_dir}/gene_feature_importances_shuffle.csv")
+avg_additional_feature_importances.to_csv(f"{output_dir}/additional_feature_importances_shuffle.csv")
+avg_gene_importances.to_csv(f"{output_dir}/gene_importances_shuffle.csv")
+
+if all_layer_importance_scores and all_layer_importance_scores[0]:
+    for i in range(len(all_layer_importance_scores[0])):
+        layer_scores = [fold_scores[i] for fold_scores in all_layer_importance_scores]
+        avg_layer_score = pd.concat(layer_scores).groupby(level=0).mean()
+        avg_layer_score.to_csv(f"{output_dir}/layer_{i}_importances_shuffle.csv")
+
+# Run P-NET on real labels
+
 n_splits = 5
 kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
@@ -60,7 +114,6 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
         batch_size=128, epochs=3000, early_stopping=True, train_inds=train_sample,
         test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes
     )
-    print(f'done run for fold {fold}, starting interpretation')
     # Perform evaluation, generate plots and importances csv and save
     plt.clf()
     results = Pnet.evaluate_and_interpret(
@@ -68,17 +121,12 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
         test_dataset,
         tumor_types.columns.values
     )
-    print(f'Done interpretation for fold {fold}')
     all_gene_feature_importances.append(results['gene_feature_importances'])
     all_additional_feature_importances.append(results['additional_feature_importances'])
     all_gene_importances.append(results['gene_importances'])
     all_layer_importance_scores.append(results['layer_importance_scores'])
     all_y_true.append(results['y_true'])
     all_pred_proba.append(results['pred_proba'])
-
-# Aggregate and save final results
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
 
 # Save all_y_true and all_y_pred as pickle
 pickle.dump(all_pred_proba , open(f"{output_dir}/all_y_proba.pickle", "wb"))
