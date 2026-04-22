@@ -64,7 +64,7 @@ else:
     selected_genes = list(scores_hap1.columns)
 
 samples = np.array(tumor_types.index.tolist())
-n_splits = 5
+n_splits = 2
 kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)  
 
 all_gene_feature_importances = []

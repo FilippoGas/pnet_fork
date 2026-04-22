@@ -598,3 +598,28 @@ class EarlyStopper:
             if self.counter >= self.patience:
                 return True
         return False
+
+
+class AdversaryEarlyStopper:
+    def __init__(self, save_path, patience=50, min_delta=0.001, verbose=False):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = np.inf
+        self.verbose = verbose
+        self.save_path = save_path
+
+    def early_stop(self, validation_loss, model):
+        if validation_loss < self.best_loss - self.min_delta:
+            self.best_loss = validation_loss
+            torch.save(model.state_dict(), self.save_path)
+            self.counter = 0
+            if self.verbose:
+                print(f'Adv loss improved to {validation_loss:.6f}')
+        else:
+            self.counter += 1
+            if self.verbose:
+                print(f'Adv loss no improvement: {self.counter}/{self.patience}')
+            if self.counter >= self.patience:
+                return True
+        return False
