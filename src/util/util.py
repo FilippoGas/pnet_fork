@@ -577,6 +577,28 @@ def get_loss_function(task):
     return loss_function
 
 
+def balance_split(sample_list, labels, minority_class=1):
+    """
+    Balance classes in a sample list by subsampling the majority class.
+    
+    :param sample_list: list(str); List of sample names in the split
+    :param labels: pd.DataFrame; DataFrame with labels indexed by sample name
+    :param minority_class: int; Label of minority class to preserve (default=1)
+    :return: list(str); Balanced list of samples
+    """
+    labels_in_split = labels.loc[sample_list]
+    labels_array = labels_in_split.values.flatten()
+    
+    minority_mask = labels_array == minority_class
+    minority_samples = [s for s, m in zip(sample_list, minority_mask) if m]
+    majority_samples = [s for s, m in zip(sample_list, minority_mask) if not m]
+    
+    n_to_sample = len(minority_samples)
+    sampled_majority = np.random.choice(majority_samples, size=n_to_sample, replace=False)
+    
+    return minority_samples + list(sampled_majority)
+
+
 class EarlyStopper:
     def __init__(self, save_path, patience=1, min_delta=0, verbose=False):
         self.patience = patience

@@ -529,7 +529,6 @@ def validate(model, dataloader):
         return main_loss, adv_loss
     return main_loss
 
-
 def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_decay=1e-4, epochs=300, verbose=False,
           early_stopping=True, lr_scheduler=False):
     if torch.cuda.is_available():

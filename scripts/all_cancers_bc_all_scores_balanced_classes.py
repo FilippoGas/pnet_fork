@@ -5,27 +5,29 @@ sys.path.append(os.path.dirname(__file__)+"/../src/")
 import pandas as pd
 import numpy as np
 import pickle
+import torch
 import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedKFold
 from pnet import Pnet
 from util import util, sankey_diag
 
 # Read params
-agg_func    = sys.argv[1]
-score_type  = sys.argv[2]
-tumor_type  = sys.argv[3]
-gene_list   = sys.argv[4]
+tumor_type  = sys.argv[1]
+gene_list   = sys.argv[2]
+score_type  = sys.argv[3]
 
 # Paths
-input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/aggregated_scores/"+score_type+"/"+agg_func+"/"
+input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/aggregated_scores"
 cancer_genes_list   = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
-output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+gene_list+"/"+tumor_type+"/plots/"+score_type+"/"+agg_func
+output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+gene_list+"_all_scores_balanced_classes/"+tumor_type+"/"+score_type+"/plots"
 tumor_types_path    = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
 
-# Load scores and sample data
-scores_hap1, scores_hap2 = util.load_hap_scores(input_dir, agg_func, score_type)
-genetic_data = {'scores_hap1':scores_hap1,
-                'scores_hap2':scores_hap2}
+# Load ALL scores and sample data
+genetic_data = dict()
+for agg_func in ["avg", "sd", "max", "min", "delta"]:
+    scores_hap1, scores_hap2 = util.load_hap_scores(input_dir+"/"+score_type+"/"+agg_func+"/", agg_func, score_type)
+    genetic_data[agg_func+"_"+score_type+"_hap1"] = scores_hap1
+    genetic_data[agg_func+"_"+score_type+"_hap2"] = scores_hap2
 
 # Load tumor types
 tumor_types =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
@@ -39,7 +41,9 @@ else:
     # Select all genes in dataset
     selected_genes = list(scores_hap1.columns)
 
+# Get samples list
 samples = np.array(tumor_types.index.tolist())
+
 n_splits = 5
 kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
@@ -51,15 +55,14 @@ all_y_true = []
 all_pred_proba = []
 
 for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[tumor_types.columns[0]])):
-    train_sample = samples[train_index].tolist()
-    test_sample = samples[test_index].tolist()
+    train_sample = util.balance_split(samples[train_index].tolist(), tumor_types)
+    test_sample = util.balance_split(samples[test_index].tolist(), tumor_types)
 
     model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(
         genetic_data, tumor_types, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
         batch_size=128, epochs=3000, early_stopping=True, train_inds=train_sample,
         test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes
     )
-
     # Perform evaluation, generate plots and importances csv and save
     plt.clf()
     results = Pnet.evaluate_and_interpret(
@@ -67,7 +70,6 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
         test_dataset,
         tumor_types.columns.values
     )
-
     all_gene_feature_importances.append(results['gene_feature_importances'])
     all_additional_feature_importances.append(results['additional_feature_importances'])
     all_gene_importances.append(results['gene_importances'])
@@ -75,16 +77,24 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
     all_y_true.append(results['y_true'])
     all_pred_proba.append(results['pred_proba'])
 
-# Aggregate and save final results
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
-
-# Save all_y_true and all_y_pred as pickle
-pickle.dump(all_pred_proba , open(f"{output_dir}/all_y_proba.pickle", "wb"))
-pickle.dump(all_y_true, open(f"{output_dir}/all_y_ture.pickle", "wb"))
+# Save all_y_true and all_y_pred as CSV
+all_y_true_df = pd.concat([pd.DataFrame(y.cpu().numpy()) for y in all_y_true])
+all_pred_proba_df = pd.concat([pd.DataFrame(p.cpu().numpy()) for p in all_pred_proba])
+all_y_true_df.to_csv(f"{output_dir}/all_y_true.csv", index=False)
+all_pred_proba_df.to_csv(f"{output_dir}/all_y_pred_proba.csv", index=False)
 
 if all_y_true and all_pred_proba:
-# Generate and save mean ROC and PRC plots
+    # Compute F1 for each fold
+    f1_scores = []
+    for y_true, pred_proba in zip(all_y_true, all_pred_proba):
+        pred_binary = (pred_proba > 0.5).float()
+        f1 = util.get_f1(pred_binary, y_true.to(torch.int))
+        f1_scores.append(f1.item())
+
+    mean_f1 = np.mean(f1_scores)
+    std_f1 = np.std(f1_scores)
+
+    # Generate and save mean ROC and PRC plots
     mean_roc_auc, std_roc_auc = util.plot_mean_roc_curve(all_y_true, all_pred_proba, tumor_types.columns.values, f"{output_dir}/roc_auc_curve.pdf")
     mean_prc_auc, std_prc_auc = util.plot_mean_prc_curve(all_y_true, all_pred_proba, f"{output_dir}/prc_auc_curve.pdf")
     
@@ -93,7 +103,9 @@ if all_y_true and all_pred_proba:
         'mean_roc_auc': [mean_roc_auc],
         'std_roc_auc':  [std_roc_auc],
         'mean_prc_auc': [mean_prc_auc],
-        'std_prc_auc':  [std_prc_auc]
+        'std_prc_auc':  [std_prc_auc],
+        'mean_f1': [mean_f1],
+        'std_f1': [std_f1]
     }).to_csv(f"{output_dir}/mean_auc_scores.csv", index=False)
 
 # Average importance scores and folds
