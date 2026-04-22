@@ -5,6 +5,7 @@ sys.path.append(os.path.dirname(__file__)+"/../src/")
 import pandas as pd
 import numpy as np
 import pickle
+import torch
 import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedKFold
 from pnet import Pnet
@@ -76,12 +77,24 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
     all_y_true.append(results['y_true'])
     all_pred_proba.append(results['pred_proba'])
 
-# Save all_y_true and all_y_pred as pickle
-pickle.dump(all_pred_proba , open(f"{output_dir}/all_y_proba.pickle", "wb"))
-pickle.dump(all_y_true, open(f"{output_dir}/all_y_ture.pickle", "wb"))
+# Save all_y_true and all_y_pred as CSV
+all_y_true_df = pd.concat([pd.DataFrame(y.cpu().numpy()) for y in all_y_true])
+all_pred_proba_df = pd.concat([pd.DataFrame(p.cpu().numpy()) for p in all_pred_proba])
+all_y_true_df.to_csv(f"{output_dir}/all_y_true.csv", index=False)
+all_pred_proba_df.to_csv(f"{output_dir}/all_y_pred_proba.csv", index=False)
 
 if all_y_true and all_pred_proba:
-# Generate and save mean ROC and PRC plots
+    # Compute F1 for each fold
+    f1_scores = []
+    for y_true, pred_proba in zip(all_y_true, all_pred_proba):
+        pred_binary = (pred_proba > 0.5).float()
+        f1 = util.get_f1(pred_binary, y_true.to(torch.int))
+        f1_scores.append(f1.item())
+
+    mean_f1 = np.mean(f1_scores)
+    std_f1 = np.std(f1_scores)
+
+    # Generate and save mean ROC and PRC plots
     mean_roc_auc, std_roc_auc = util.plot_mean_roc_curve(all_y_true, all_pred_proba, tumor_types.columns.values, f"{output_dir}/roc_auc_curve.pdf")
     mean_prc_auc, std_prc_auc = util.plot_mean_prc_curve(all_y_true, all_pred_proba, f"{output_dir}/prc_auc_curve.pdf")
     
@@ -90,7 +103,9 @@ if all_y_true and all_pred_proba:
         'mean_roc_auc': [mean_roc_auc],
         'std_roc_auc':  [std_roc_auc],
         'mean_prc_auc': [mean_prc_auc],
-        'std_prc_auc':  [std_prc_auc]
+        'std_prc_auc':  [std_prc_auc],
+        'mean_f1': [mean_f1],
+        'std_f1': [std_f1]
     }).to_csv(f"{output_dir}/mean_auc_scores.csv", index=False)
 
 # Average importance scores and folds
