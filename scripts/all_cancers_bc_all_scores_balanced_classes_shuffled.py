@@ -18,7 +18,7 @@ score_type  = sys.argv[3]
 # Paths
 input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/aggregated_scores"
 cancer_genes_list   = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/gene_lists/CancerGenesList.csv"
-output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+gene_list+"_all_scores_balanced_classes/"+tumor_type+"/"+score_type+"/importances_shuffled_labels"
+output_dir          = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/bc/"+gene_list+"_all_scores_balanced_classes/"+tumor_type+"/"+score_type+"/shuffled_labels"
 tumor_types_path    = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
 
 # Load ALL scores and sample data
@@ -28,9 +28,10 @@ for agg_func in ["avg", "sd", "max", "min", "delta"]:
     genetic_data[agg_func+"_"+score_type+"_hap1"] = scores_hap1
     genetic_data[agg_func+"_"+score_type+"_hap2"] = scores_hap2
 
-# Load tumor types
+# Load tumor types and shuffle labels
 tumor_types =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
 tumor_types[tumor_types.columns[0]] = tumor_types[tumor_types.columns[0]].astype(int)
+tumor_types[tumor_types.columns[0]] = tumor_types.sample(frac=1).values
 
 # Chose gene list to operate on
 if gene_list == "cancer_genes":
@@ -60,7 +61,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
     model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(
         genetic_data, tumor_types, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
         batch_size=128, epochs=3000, early_stopping=True, train_inds=train_sample,
-        test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes, shuffle_labels= True
+        test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes, shuffle_labels=False
     )
     # Perform evaluation, generate plots and importances csv and save
     plt.clf()
