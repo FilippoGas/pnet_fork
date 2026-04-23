@@ -401,6 +401,31 @@ def get_f1(pred, target):
     return f1_scores
 
 
+def get_best_f1(pred_proba, y_true, thresholds=None):
+    """
+    Find the best F1 score by testing different thresholds.
+    
+    :param pred_proba: torch.Tensor; predicted probabilities
+    :param y_true: torch.Tensor; true labels
+    :param thresholds: np.array; thresholds to test (default: 0.1 to 0.9)
+    :return: tuple(float, float); best F1 score and best threshold
+    """
+    if thresholds is None:
+        thresholds = np.arange(0.1, 0.95, 0.05)
+    
+    best_f1 = 0
+    best_thresh = 0.5
+    for thresh in thresholds:
+        pred_binary = (pred_proba > thresh)
+        f1 = util.get_f1(pred_binary, y_true.to(torch.int))
+        if isinstance(f1, torch.Tensor):
+            f1 = f1.item()
+        if f1 > best_f1:
+            best_f1 = f1
+            best_thresh = thresh
+    return best_f1, best_thresh
+
+
 def multiclass_auc(pred_proba, target, target_names, save=False, figsize=(10,8)):
     # Get the predicted class labels from the probabilities
     # Calculate the AUC and ROC curves for each class
