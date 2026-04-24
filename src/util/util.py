@@ -417,7 +417,7 @@ def get_best_f1(pred_proba, y_true, thresholds=None):
     best_thresh = 0.5
     for thresh in thresholds:
         pred_binary = (pred_proba > thresh)
-        f1 = util.get_f1(pred_binary, y_true.to(torch.int))
+        f1 = get_f1(pred_binary, y_true.to(torch.int))
         if isinstance(f1, torch.Tensor):
             f1 = f1.item()
         if f1 > best_f1:
