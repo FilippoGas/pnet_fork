@@ -85,19 +85,10 @@ all_pred_proba_df.to_csv(f"{output_dir}/all_y_pred_proba.csv", index=False)
 
 if all_y_true and all_pred_proba:
     # F1 at 0.5 threshold
-    f1_05_scores = [util.get_f1((pred_proba > 0.5), y_true.to(torch.int)) for y_true, pred_proba in zip(all_y_true, all_pred_proba)]
-    f1_05_scores = [s.item() if isinstance(s, torch.Tensor) else s for s in f1_05_scores]
-    mean_f1_05 = np.mean(f1_05_scores)
-    std_f1_05 = np.std(f1_05_scores)
-
-    # F1 at best threshold
-    f1_best_data = [util.get_best_f1(pred_proba, y_true) for y_true, pred_proba in zip(all_y_true, all_pred_proba)]
-    f1_best_scores = [x[0] for x in f1_best_data]
-    best_thresholds = [x[1] for x in f1_best_data]
-    mean_f1_best = np.mean(f1_best_scores)
-    std_f1_best = np.std(f1_best_scores)
-    mean_best_thresh = np.mean(best_thresholds)
-    std_best_thresh = np.std(best_thresholds)
+    f1_scores = [util.get_f1((pred_proba > 0.5), y_true.to(torch.int)) for y_true, pred_proba in zip(all_y_true, all_pred_proba)]
+    f1_scores = [s.item() if isinstance(s, torch.Tensor) else s for s in f1_scores]
+    mean_f1 = np.mean(f1_scores)
+    std_f1 = np.std(f1_scores)
 
     # Generate and save mean ROC and PRC plots
     mean_roc_auc, std_roc_auc = util.plot_mean_roc_curve(all_y_true, all_pred_proba, tumor_types.columns.values, f"{output_dir}/roc_auc_curve.pdf")
@@ -108,13 +99,7 @@ if all_y_true and all_pred_proba:
         'mean_roc_auc': [mean_roc_auc],
         'std_roc_auc':  [std_roc_auc],
         'mean_prc_auc': [mean_prc_auc],
-        'std_prc_auc':  [std_prc_auc],
-        'mean_f1_05': [mean_f1_05],
-        'std_f1_05':  [std_f1_05],
-        'mean_f1_best': [mean_f1_best],
-        'std_f1_best':  [std_f1_best],
-        'mean_best_threshold': [mean_best_thresh],
-        'std_best_threshold': [std_best_thresh]
+        'std_prc_auc':  [std_prc_auc]
     }).to_csv(f"{output_dir}/mean_auc_scores.csv", index=False)
 
 # Average importance scores and folds
