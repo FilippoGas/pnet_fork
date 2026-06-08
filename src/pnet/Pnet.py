@@ -53,9 +53,10 @@ class Regulatory_Block(nn.Module):
 
 
 class PNET_NN(pl.LightningModule):
-    def __init__(self, reactome_network, task, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3, weight_decay=1e-5,
-                 dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None, random_network=False, fcnn=False,
-                 loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False):
+    def __init__(self, reactome_network, task, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3,
+                 weight_decay=1e-5, dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None,
+                 random_network=False, fcnn=False, loss_weight=None,
+                 aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False, n_covariates=0):
         super().__init__()
         self.reactome_network = reactome_network
         self.nbr_gene_inputs = nbr_gene_inputs
@@ -76,6 +77,7 @@ class PNET_NN(pl.LightningModule):
         self.activation = activation
         self.interpret_flag = False
         self.regulatory_flag = add_regulatory_layer
+        self.n_covariates = n_covariates
         
         # Fetch connection masks from reactome network:
         if self.regulatory_flag:
@@ -117,8 +119,12 @@ class PNET_NN(pl.LightningModule):
                                                                 self.additional_dims, out_features=self.output_dim)]))
         # Weighting of the different prediction layers:
         self.attn = nn.Linear(in_features=(self.num_pred_heads) * self.output_dim, out_features=self.output_dim)
+        # Covariate correction head:
+        if self.n_covariates > 0:
+            self.covariate_head = nn.Linear(in_features=self.output_dim + self.n_covariates,
+                                            out_features=self.output_dim)
 
-    def forward(self, x, additional_data):
+    def forward(self, x, additional_data, covariates=None):
         x = self.input_layer(x)
         y_hats = []
         
@@ -145,6 +151,10 @@ class PNET_NN(pl.LightningModule):
         # Generate final prediction by weighting all predictions
         y = self.attn(torch.concat(y_hats, dim=1))
         
+        # Apply covariate correction if covariates are provided
+        if covariates is not None and covariates.shape[1] > 0:
+            y = self.covariate_head(torch.concat([y, covariates], dim=1))
+        
         # return only final prediction if in interpret mode or all predictions of all levels if in training
         if self.interpret_flag:
             return y
@@ -152,15 +162,15 @@ class PNET_NN(pl.LightningModule):
             return y, y_hats
 
     def step(self, who, batch, batch_nb):
-        x, additional, y = batch
-        pred_y, _ = self(x, additional)
+        x, additional, covariates, y = batch
+        pred_y, _ = self(x, additional, covariates)
         loss = F.cross_entropy(pred_y, y, reduction='mean')
 
         self.log(who + '_bce_loss', loss)
         return loss
     
-    def predict_proba(self,  x, additional_data, threshold=0.5):
-        logits, lower_level_logits = self.forward(x, additional_data)
+    def predict_proba(self,  x, additional_data, covariates=None, threshold=0.5):
+        logits, lower_level_logits = self.forward(x, additional_data, covariates)
         if self.task == 'BC':
             probabilities = torch.sigmoid(logits)
             return probabilities
@@ -172,8 +182,8 @@ class PNET_NN(pl.LightningModule):
             raise Exception("Trying to calculate class probabilies with a regression model")
             return logits
 
-    def predict(self,  x, additional_data, threshold=0.5):
-        logits, lower_level_logits = self.forward(x, additional_data)
+    def predict(self,  x, additional_data, covariates=None, threshold=0.5):
+        logits, lower_level_logits = self.forward(x, additional_data, covariates)
         if self.task == 'BC':
             probabilities = torch.sigmoid(logits)
             predictions = (probabilities > threshold).float()
@@ -208,33 +218,49 @@ class PNET_NN(pl.LightningModule):
     def deepLIFT(self, test_dataset, target_class=0):
         self.interpret_flag=True
         dl = captum.attr.DeepLift(self)
-        gene_importances, additional_importances = dl.attribute((test_dataset.x, test_dataset.additional)
-                                                                , target=target_class)
-        gene_importances = pd.DataFrame(gene_importances.detach().numpy(),
+        has_covariates = test_dataset.covariates.shape[1] > 0
+        if has_covariates:
+            inputs = (test_dataset.x, test_dataset.additional, test_dataset.covariates)
+        else:
+            inputs = (test_dataset.x, test_dataset.additional)
+        ig_attr = dl.attribute(inputs, target=target_class)
+        gene_importances = pd.DataFrame(ig_attr[0].detach().numpy(),
                                         index=test_dataset.input_df.index,
                                         columns=test_dataset.input_df.columns)
-        additional_importances = pd.DataFrame(additional_importances.detach().numpy(),
+        additional_importances = pd.DataFrame(ig_attr[1].detach().numpy(),
                                               index=test_dataset.additional_data.index,
                                               columns=test_dataset.additional_data.columns)
         self.gene_importances, self.additional_importances = gene_importances, additional_importances
+        if has_covariates:
+            self.covariate_importances = pd.DataFrame(ig_attr[2].detach().numpy(),
+                                                      index=test_dataset.input_df.index,
+                                                      columns=test_dataset.covariates_data.columns)
         self.interpret_flag=False
         return self.gene_importances, self.additional_importances
     
     def integrated_gradients(self, test_dataset, target_class=0):
         self.interpret_flag=True
         ig = captum.attr.IntegratedGradients(self)
-        if self.task == 'REG':
-            ig_attr = ig.attribute((test_dataset.x, test_dataset.additional), n_steps=50)
+        has_covariates = test_dataset.covariates.shape[1] > 0
+        if has_covariates:
+            inputs = (test_dataset.x, test_dataset.additional, test_dataset.covariates)
         else:
-            ig_attr, delta = ig.attribute((test_dataset.x, test_dataset.additional), return_convergence_delta=True, target=target_class)
-        gene_importances, additional_importances = ig_attr
-        gene_importances = pd.DataFrame(gene_importances.detach().numpy(),
+            inputs = (test_dataset.x, test_dataset.additional)
+        if self.task == 'REG':
+            ig_attr = ig.attribute(inputs, n_steps=50)
+        else:
+            ig_attr, delta = ig.attribute(inputs, return_convergence_delta=True, target=target_class)
+        gene_importances = pd.DataFrame(ig_attr[0].detach().numpy(),
                                         index=test_dataset.input_df.index,
                                         columns=test_dataset.input_df.columns)
-        additional_importances = pd.DataFrame(additional_importances.detach().numpy(),
+        additional_importances = pd.DataFrame(ig_attr[1].detach().numpy(),
                                               index=test_dataset.additional_data.index,
                                               columns=test_dataset.additional_data.columns)
         self.gene_importances, self.additional_importances = gene_importances, additional_importances
+        if has_covariates:
+            self.covariate_importances = pd.DataFrame(ig_attr[2].detach().numpy(),
+                                                      index=test_dataset.input_df.index,
+                                                      columns=test_dataset.covariates_data.columns)
         self.interpret_flag=False
         return self.gene_importances, self.additional_importances
 
@@ -341,10 +367,10 @@ def fit(model, dataloader, optimizer):
     model.train()
     running_loss = 0.0
     for batch in dataloader:
-        gene_data, additional_data, y = batch
-        gene_data, additional_data, y = gene_data.to(device, non_blocking = True), additional_data.to(device, non_blocking = True), y.to(device, non_blocking = True)
+        gene_data, additional_data, covariates, y = batch
+        gene_data, additional_data, covariates, y = gene_data.to(device, non_blocking=True), additional_data.to(device, non_blocking=True), covariates.to(device, non_blocking=True), y.to(device, non_blocking=True)
         optimizer.zero_grad()
-        y_hat, y_hats = model(gene_data, additional_data)
+        y_hat, y_hats = model(gene_data, additional_data, covariates)
         if model.loss_weight is not None:
             weight = model.loss_weight.to(device, non_blocking = True)
             weight_ = weight[y.data.view(-1).long()].view_as(y)
@@ -371,9 +397,9 @@ def validate(model, dataloader):
     running_loss = 0.0
     with torch.no_grad():
         for batch in dataloader:
-            gene_data, additional_data, y = batch
-            gene_data, additional_data, y = gene_data.to(device, non_blocking = True), additional_data.to(device, non_blocking = True), y.to(device, non_blocking = True)
-            y_hat, y_hats = model(gene_data, additional_data)
+            gene_data, additional_data, covariates, y = batch
+            gene_data, additional_data, covariates, y = gene_data.to(device, non_blocking=True), additional_data.to(device, non_blocking=True), covariates.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            y_hat, y_hats = model(gene_data, additional_data, covariates)
             if model.loss_weight is not None:
                 weight = model.loss_weight.to(device, non_blocking = True)
                 weight_ = weight[y.data.view(-1).long()].view_as(y)
@@ -540,6 +566,8 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
     gene_feature_importances.to_csv(path+'/gene_feature_importances.csv')
     additional_feature_importances.to_csv(path+'/additional_feature_importances.csv')
     gene_importances.to_csv(path+'/gene_importances.csv')
+    if hasattr(model, 'covariate_importances'):
+        model.covariate_importances.to_csv(path+'/covariate_feature_importances.csv')
     for i, layer in enumerate(layer_importance_scores):
         layer.to_csv(path+'/layer_{}_importances.csv'.format(i))
     
@@ -547,20 +575,25 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
 
 
 
-def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False, task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
+def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, covariates=None, test_split=0.2,
+        seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False,
+        early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False,
+        task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
+    n_covariates = covariates.shape[1] if covariates is not None else 0
     train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, gene_set, additional_data,
-                                                                  test_split, seed, train_inds, test_inds,
-                                                                  shuffle_labels=shuffle_labels)
+                                                                   covariates, test_split, seed, train_inds,
+                                                                   test_inds, shuffle_labels=shuffle_labels)
     
     reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes(), pathways_to_drop=drop_pathways)
 
     model = PNET_NN(reactome_network=reactome_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
-                    output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
-                    input_dropout=input_dropout, aux_loss_weights=aux_loss_weights
+                    output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn,
+                    loss_weight=loss_weight, input_dropout=input_dropout, aux_loss_weights=aux_loss_weights,
+                    n_covariates=n_covariates
                     )
     train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
@@ -569,44 +602,50 @@ def run(genetic_data, target, save_path=None, gene_set=None, additional_data=Non
     return model, train_scores, test_scores, train_dataset, test_dataset
 
 
-def run_regulatory(genetic_data, target, save_path='../results/model', gene_set=None, additional_data=None, test_split=0.2, seed=None,
-                   dropout=0.2, input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True,
-                   train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None, loss_fn=None, loss_weight=None,
-                   aux_loss_weights=[25, 2, 7, 20, 54, 148, 400]):
+def run_regulatory(genetic_data, target, save_path='../results/model', gene_set=None, additional_data=None,
+                   covariates=None, test_split=0.2, seed=None, dropout=0.2, input_dropout=0.5, lr=1e-3,
+                   weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True,
+                   train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None, loss_fn=None,
+                   loss_weight=None, aux_loss_weights=[25, 2, 7, 20, 54, 148, 400]):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
+    n_covariates = covariates.shape[1] if covariates is not None else 0
     train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, gene_set, additional_data,
-                                                                  test_split, seed, train_inds, test_inds)
+                                                                   covariates, test_split, seed, train_inds, test_inds)
     
     reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes())
 
     model = PNET_NN(reactome_network=reactome_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
-                    output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
-                    input_dropout=input_dropout, aux_loss_weights=aux_loss_weights, add_regulatory_layer=True
+                    output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn,
+                    loss_weight=loss_weight, input_dropout=input_dropout, aux_loss_weights=aux_loss_weights,
+                    add_regulatory_layer=True, n_covariates=n_covariates
                     )
     train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose, early_stopping)
     return model, train_scores, test_scores, train_dataset, test_dataset
 
 
-def run_geneset(genetic_data, target, geneset_path, num_layers=3, sparsity=0.9, save_path='../results/model', genes=None, additional_data=None,
-                test_split=0.2, seed=None, dropout=0.2, input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False,
-                early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None, loss_fn=None, loss_weight=None,
-                aux_loss_weights=[2, 7, 20, 54, 148, 400]):
+def run_geneset(genetic_data, target, geneset_path, num_layers=3, sparsity=0.9, save_path='../results/model',
+                genes=None, additional_data=None, covariates=None, test_split=0.2, seed=None, dropout=0.2,
+                input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False,
+                early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None,
+                loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400]):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
+    n_covariates = covariates.shape[1] if covariates is not None else 0
     train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, genes, additional_data,
-                                                                  test_split, seed, train_inds, test_inds)
+                                                                   covariates, test_split, seed, train_inds, test_inds)
     
     geneset_network = GenesetNetwork.GenesetNetwork(train_dataset.get_genes(), path=geneset_path, num_layers=num_layers, sparsity=sparsity, trim=0)
 
     model = PNET_NN(reactome_network=geneset_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
-                    output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn, loss_weight=loss_weight,
-                    input_dropout=input_dropout, aux_loss_weights=aux_loss_weights
+                    output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn,
+                    loss_weight=loss_weight, input_dropout=input_dropout, aux_loss_weights=aux_loss_weights,
+                    n_covariates=n_covariates
                     )
     train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
