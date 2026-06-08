@@ -28,11 +28,11 @@ for agg_func in ["avg", "sd", "max", "min", "delta"]:
     genetic_data[agg_func+"_"+score_type+"_hap2"] = scores_hap2
 
 # Load tumor types
-tumor_types =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
+tumor_types                         =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
 tumor_types[tumor_types.columns[0]] = tumor_types[tumor_types.columns[0]].astype(int)
 
 # Load covariates
-covariates = pd.read_csv(covariates_path).set_index("sample")
+covariates_df = pd.read_csv(covariates_path).set_index("sample")
 
 # Select all genes in dataset
 selected_genes = list(scores_hap1.columns)
@@ -46,6 +46,7 @@ kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 all_gene_feature_importances = []
 all_additional_feature_importances = []
 all_gene_importances = []
+all_covariates_importances = []
 all_layer_importance_scores = []
 all_y_true = []
 all_pred_proba = []
@@ -55,7 +56,7 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
     test_sample = util.balance_split(samples[test_index].tolist(), tumor_types)
 
     model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(
-        genetic_data, tumor_types, covariates, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
+        genetic_data, tumor_types, covariates=covariates_df, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
         batch_size=128, epochs=3000, early_stopping=True, train_inds=train_sample,
         test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes
     )
@@ -69,12 +70,13 @@ for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[t
     all_gene_feature_importances.append(results['gene_feature_importances'])
     all_additional_feature_importances.append(results['additional_feature_importances'])
     all_gene_importances.append(results['gene_importances'])
+    all_covariates_importances.append(model.covariate_importances)
     all_layer_importance_scores.append(results['layer_importance_scores'])
     all_y_true.append(results['y_true'])
     all_pred_proba.append(results['pred_proba'])
 
 # Save all_y_true and all_y_pred as CSV
-all_y_true_df = pd.concat([pd.DataFrame(y.cpu().numpy()) for y in all_y_true])
+all_y_true_df     = pd.concat([pd.DataFrame(y.cpu().numpy()) for y in all_y_true])
 all_pred_proba_df = pd.concat([pd.DataFrame(p.cpu().numpy()) for p in all_pred_proba])
 all_y_true_df.to_csv(f"{output_dir}/all_y_true.csv", index=False)
 all_pred_proba_df.to_csv(f"{output_dir}/all_y_pred_proba.csv", index=False)
@@ -83,8 +85,8 @@ if all_y_true and all_pred_proba:
     # F1 at 0.5 threshold
     f1_scores = [util.get_f1((pred_proba > 0.5), y_true.to(torch.int)) for y_true, pred_proba in zip(all_y_true, all_pred_proba)]
     f1_scores = [s.item() if isinstance(s, torch.Tensor) else s for s in f1_scores]
-    mean_f1 = np.mean(f1_scores)
-    std_f1 = np.std(f1_scores)
+    mean_f1   = np.mean(f1_scores)
+    std_f1    = np.std(f1_scores)
 
     # Generate and save mean ROC and PRC plots
     mean_roc_auc, std_roc_auc = util.plot_mean_roc_curve(all_y_true, all_pred_proba, tumor_types.columns.values, f"{output_dir}/roc_auc_curve.pdf")
@@ -96,28 +98,23 @@ if all_y_true and all_pred_proba:
         'std_roc_auc':  [std_roc_auc],
         'mean_prc_auc': [mean_prc_auc],
         'std_prc_auc':  [std_prc_auc],
-        'mean_f1': [mean_f1],
-        'std_f1':  [std_f1]
+        'mean_f1':      [mean_f1],
+        'std_f1':       [std_f1]
     }).to_csv(f"{output_dir}/mean_auc_scores.csv", index=False)
 
 # Average importance scores and folds
-avg_gene_feature_importances = pd.concat(all_gene_feature_importances).groupby(level=0).mean()
-avg_additional_feature_importances = pd.concat(all_additional_feature_importances).groupby(level=0).mean()
-avg_gene_importances = pd.concat(all_gene_importances).groupby(level=0).mean()
+avg_gene_feature_importances        = pd.concat(all_gene_feature_importances).groupby(level=0).mean()
+avg_additional_feature_importances  = pd.concat(all_additional_feature_importances).groupby(level=0).mean()
+avg_gene_importances                = pd.concat(all_gene_importances).groupby(level=0).mean()
+avg_covariates_importances          = pd.concat(all_covariates_importances).groupby(level=0).mean()
 
 avg_gene_feature_importances.to_csv(f"{output_dir}/gene_feature_importances.csv")
 avg_additional_feature_importances.to_csv(f"{output_dir}/additional_feature_importances.csv")
 avg_gene_importances.to_csv(f"{output_dir}/gene_importances.csv")
+avg_covariates_importances.to_csv(f"{output_dir}/covariates_importances.csv")
 
-# Prepare importance dataframes for Sankey diagram
-avg_layer_importance_scores = []
 if all_layer_importance_scores and all_layer_importance_scores[0]:
     for i in range(len(all_layer_importance_scores[0])):
         layer_scores = [fold_scores[i] for fold_scores in all_layer_importance_scores]
         avg_layer_score = pd.concat(layer_scores).groupby(level=0).mean()
         avg_layer_score.to_csv(f"{output_dir}/layer_{i}_importances.csv")
-        avg_layer_importance_scores.append(avg_layer_score)
-
-layer_list          = [avg_gene_importances] + avg_layer_importance_scores
-layer_list_names    = ['gene'] + [f'layer_{i}' for i in range(len(avg_layer_importance_scores))]
-layer_list_dict     = dict(zip(layer_list_names, layer_list))
