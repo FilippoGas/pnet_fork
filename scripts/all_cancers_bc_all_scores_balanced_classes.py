@@ -99,7 +99,9 @@ if all_y_true and all_pred_proba:
         'mean_roc_auc': [mean_roc_auc],
         'std_roc_auc':  [std_roc_auc],
         'mean_prc_auc': [mean_prc_auc],
-        'std_prc_auc':  [std_prc_auc]
+        'std_prc_auc':  [std_prc_auc],
+        'mean_f1': [mean_f1],
+        'std_f1':  [std_f1]
     }).to_csv(f"{output_dir}/mean_auc_scores.csv", index=False)
 
 # Average importance scores and folds
