@@ -32,7 +32,10 @@ tumor_types                         =  pd.read_csv(tumor_types_path, sep=",").dr
 tumor_types[tumor_types.columns[0]] = tumor_types[tumor_types.columns[0]].astype(int)
 
 # Load covariates
-covariates_df = pd.read_csv(covariates_path).set_index("sample")
+covariates_df = pd.read_csv(covariates_path).dropna().set_index("sample")
+# Convert sex variable to numeric
+covariates_df['sex'] = covariates_df['sex'].map({'male':0,'female':1})
+covariates_df = covariates_df.astype(float)
 
 # Select all genes in dataset
 selected_genes = list(scores_hap1.columns)
