@@ -27,9 +27,10 @@ for agg_func in ["avg", "sd", "max", "min", "delta"]:
     genetic_data[agg_func+"_"+score_type+"_hap1"] = scores_hap1
     genetic_data[agg_func+"_"+score_type+"_hap2"] = scores_hap2
 
-# Load tumor types
+# Load tumor types and shuffle labels
 tumor_types                         =  pd.read_csv(tumor_types_path, sep=",").dropna().set_index("sample")
 tumor_types[tumor_types.columns[0]] = tumor_types[tumor_types.columns[0]].astype(int)
+tumor_types[tumor_types.columns[0]] = tumor_types.sample(frac=1).values
 
 # Load covariates
 covariates_df = pd.read_csv(covariates_path).dropna().set_index("sample")
