@@ -218,11 +218,8 @@ class PNET_NN(pl.LightningModule):
     def deepLIFT(self, test_dataset, target_class=0):
         self.interpret_flag=True
         dl = captum.attr.DeepLift(self)
-        has_covariates = test_dataset.covariates.shape[1] > 0
-        if has_covariates:
-            inputs = (test_dataset.x, test_dataset.additional, test_dataset.covariates)
-        else:
-            inputs = (test_dataset.x, test_dataset.additional)
+        inputs = self._interpret_inputs(test_dataset)
+        has_covariates = len(inputs) > 2
         ig_attr = dl.attribute(inputs, target=target_class)
         gene_importances = pd.DataFrame(ig_attr[0].detach().numpy(),
                                         index=test_dataset.input_df.index,
@@ -241,11 +238,8 @@ class PNET_NN(pl.LightningModule):
     def integrated_gradients(self, test_dataset, target_class=0):
         self.interpret_flag=True
         ig = captum.attr.IntegratedGradients(self)
-        has_covariates = test_dataset.covariates.shape[1] > 0
-        if has_covariates:
-            inputs = (test_dataset.x, test_dataset.additional, test_dataset.covariates)
-        else:
-            inputs = (test_dataset.x, test_dataset.additional)
+        inputs = self._interpret_inputs(test_dataset)
+        has_covariates = len(inputs) > 2
         if self.task == 'REG':
             ig_attr = ig.attribute(inputs, n_steps=50)
         else:
@@ -264,11 +258,18 @@ class PNET_NN(pl.LightningModule):
         self.interpret_flag=False
         return self.gene_importances, self.additional_importances
 
+    def _interpret_inputs(self, test_dataset):
+        has_covariates = test_dataset.covariates.shape[1] > 0
+        if has_covariates:
+            return (test_dataset.x, test_dataset.additional, test_dataset.covariates)
+        return (test_dataset.x, test_dataset.additional)
+
     def layerwise_importance(self, test_dataset, target_class=0):
         self.interpret_flag=True
+        inputs = self._interpret_inputs(test_dataset)
         layer_importance_scores = []
-        cond = captum.attr.LayerConductance(self, self.first_gene_layer)  # ReLU output of masked layer at each level
-        cond_vals = cond.attribute((test_dataset.x, test_dataset.additional), target=target_class)
+        cond = captum.attr.LayerConductance(self, self.first_gene_layer)
+        cond_vals = cond.attribute(inputs, target=target_class)
         cols = [self.reactome_network.pathway_encoding.set_index('ID').loc[col]['pathway'] for col in self.reactome_network.pathway_layers[0].index]
         cond_vals_genomic = pd.DataFrame(cond_vals.detach().numpy(),
                                          columns=cols,
@@ -277,8 +278,8 @@ class PNET_NN(pl.LightningModule):
         layer_importance_scores.append(pathway_imp_by_target)
         
         for i, level in enumerate(self.layers):
-            cond = captum.attr.LayerConductance(self, level.pathway_layer)  # ReLU output of masked layer at each level
-            cond_vals = cond.attribute((test_dataset.x, test_dataset.additional), target=target_class)
+            cond = captum.attr.LayerConductance(self, level.pathway_layer)
+            cond_vals = cond.attribute(inputs, target=target_class)
             cols = [self.reactome_network.pathway_encoding.set_index('ID').loc[col]['pathway'] for col in self.reactome_network.pathway_layers[i].columns]
             cond_vals_genomic = pd.DataFrame(cond_vals.detach().numpy(),
                                              columns=cols,
@@ -290,10 +291,11 @@ class PNET_NN(pl.LightningModule):
     
     def layerwise_activation(self, test_dataset, target_class=0):
         self.interpret_flag=True
+        inputs = self._interpret_inputs(test_dataset)
         layer_importance_scores = []
         for i, level in enumerate(self.layers):
             act = captum.attr.LayerActivation(self, level.pathway_layer)
-            act_vals = act.attribute((test_dataset.x, test_dataset.additional), attribute_to_layer_input=True)
+            act_vals = act.attribute(inputs, attribute_to_layer_input=True)
             cols = [self.reactome_network.pathway_encoding.set_index('ID').loc[col]['pathway'] for col in self.reactome_network.pathway_layers[i].index]
             act_vals_genomic = pd.DataFrame(act_vals.detach().numpy(),
                                             columns=cols,
@@ -305,17 +307,19 @@ class PNET_NN(pl.LightningModule):
     
     def neuron_conductance(self, test_dataset, target_class=0):
         self.interpret_flag=True
+        inputs = self._interpret_inputs(test_dataset)
         layer_importance_scores = []
         for i, level in enumerate(self.layers):
             neuron_cond = captum.attr.NeuronConductance(self, level.pathway_layer)
-            neuron_cond_att = neuron_cond.attribute((test_dataset.x, test_dataset.additional), target=target_class)
+            neuron_cond_att = neuron_cond.attribute(inputs, target=target_class)
             
         self.interpret_flag=False    
     
     def gene_importance(self, test_dataset, target_class=0):
         self.interpret_flag=True
+        inputs = self._interpret_inputs(test_dataset)
         cond = captum.attr.LayerConductance(self, self.input_layer)
-        cond_vals = cond.attribute((test_dataset.x, test_dataset.additional), target=target_class)
+        cond_vals = cond.attribute(inputs, target=target_class)
         cols = self.reactome_network.gene_list
         cond_vals_genomic = pd.DataFrame(cond_vals.detach().numpy(),
                                          columns=cols,
@@ -326,8 +330,9 @@ class PNET_NN(pl.LightningModule):
     
     def regulatory_layer_importance(self, test_dataset, target_class=0):
         self.interpret_flag=True
+        inputs = self._interpret_inputs(test_dataset)
         cond = captum.attr.LayerConductance(self, self.regulatory_layer.regulatory_layer)
-        cond_vals = cond.attribute((test_dataset.x, test_dataset.additional), target=target_class)
+        cond_vals = cond.attribute(inputs, target=target_class)
         cols = self.reactome_network.gene_list
         cond_vals_genomic = pd.DataFrame(cond_vals.detach().numpy(),
                                          columns=cols,
@@ -472,6 +477,7 @@ def evaluate_and_interpret(model, test_dataset, target_names):
     """
     x_test = test_dataset.x
     additional_test = test_dataset.additional
+    covariates_test = test_dataset.covariates
     y_test = test_dataset.y
     model.to('cpu')
 
@@ -481,7 +487,7 @@ def evaluate_and_interpret(model, test_dataset, target_names):
     prc_curve_fig = None
 
     if model.task == 'BC' or model.task == 'MC':
-        pred_proba = model.predict_proba(x_test, additional_test).detach()
+        pred_proba = model.predict_proba(x_test, additional_test, covariates_test).detach()
         roc_auc_score, _ = util.get_auc(pred_proba, y_test, target_names)
         prc_auc_score, _ = util.get_auc_prc_fig(pred_proba, y_test, target_names)
         roc_curve_fig = None # Plots are now generated outside the loop
@@ -531,11 +537,12 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
     """
     x_test = test_dataset.x
     additional_test = test_dataset.additional
+    covariates_test = test_dataset.covariates
     y_test = test_dataset.y
     model.to('cpu')
     if model.task=='BC' or model.task=='MC':
-        pred_proba = model.predict_proba(x_test, additional_test).detach()
-        pred = model.predict(x_test, additional_test).detach()
+        pred_proba = model.predict_proba(x_test, additional_test, covariates_test).detach()
+        pred = model.predict(x_test, additional_test, covariates_test).detach()
         roc_auc_score = util.get_auc(pred_proba, y_test, target_names, save=path + '/roc_auc_curve.pdf')
 
         # Calculate and plot PRC curve
