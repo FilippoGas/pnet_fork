@@ -151,8 +151,8 @@ class PNET_NN(pl.LightningModule):
         # Generate final prediction by weighting all predictions
         y = self.attn(torch.concat(y_hats, dim=1))
         
-        # Apply covariate correction if covariates are provided
-        if covariates is not None and covariates.shape[1] > 0:
+        # Apply covariate correction only when this model was built with a covariate head
+        if self.n_covariates > 0 and covariates is not None and covariates.shape[1] > 0:
             y = self.covariate_head(torch.concat([y, covariates], dim=1))
         
         # return only final prediction if in interpret mode or all predictions of all levels if in training
@@ -169,7 +169,7 @@ class PNET_NN(pl.LightningModule):
         self.log(who + '_bce_loss', loss)
         return loss
     
-    def predict_proba(self,  x, additional_data, covariates=None, threshold=0.5):
+    def predict_proba(self,  x, additional_data, threshold=0.5, covariates=None):
         logits, lower_level_logits = self.forward(x, additional_data, covariates)
         if self.task == 'BC':
             probabilities = torch.sigmoid(logits)
@@ -182,7 +182,7 @@ class PNET_NN(pl.LightningModule):
             raise Exception("Trying to calculate class probabilies with a regression model")
             return logits
 
-    def predict(self,  x, additional_data, covariates=None, threshold=0.5):
+    def predict(self,  x, additional_data, threshold=0.5, covariates=None):
         logits, lower_level_logits = self.forward(x, additional_data, covariates)
         if self.task == 'BC':
             probabilities = torch.sigmoid(logits)
@@ -259,7 +259,7 @@ class PNET_NN(pl.LightningModule):
         return self.gene_importances, self.additional_importances
 
     def _interpret_inputs(self, test_dataset):
-        has_covariates = test_dataset.covariates.shape[1] > 0
+        has_covariates = self.n_covariates > 0 and test_dataset.covariates.shape[1] > 0
         if has_covariates:
             return (test_dataset.x, test_dataset.additional, test_dataset.covariates)
         return (test_dataset.x, test_dataset.additional)
@@ -487,7 +487,7 @@ def evaluate_and_interpret(model, test_dataset, target_names):
     prc_curve_fig = None
 
     if model.task == 'BC' or model.task == 'MC':
-        pred_proba = model.predict_proba(x_test, additional_test, covariates_test).detach()
+        pred_proba = model.predict_proba(x_test, additional_test, covariates=covariates_test).detach()
         roc_auc_score, _ = util.get_auc(pred_proba, y_test, target_names)
         prc_auc_score, _ = util.get_auc_prc_fig(pred_proba, y_test, target_names)
         roc_curve_fig = None # Plots are now generated outside the loop
@@ -541,8 +541,8 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
     y_test = test_dataset.y
     model.to('cpu')
     if model.task=='BC' or model.task=='MC':
-        pred_proba = model.predict_proba(x_test, additional_test, covariates_test).detach()
-        pred = model.predict(x_test, additional_test, covariates_test).detach()
+        pred_proba = model.predict_proba(x_test, additional_test, covariates=covariates_test).detach()
+        pred = model.predict(x_test, additional_test, covariates=covariates_test).detach()
         roc_auc_score = util.get_auc(pred_proba, y_test, target_names, save=path + '/roc_auc_curve.pdf')
 
         # Calculate and plot PRC curve
@@ -582,17 +582,18 @@ def evaluate_interpret_save(model, test_dataset, target_names, path):
 
 
 
-def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, covariates=None, test_split=0.2,
+def run(genetic_data, target, save_path=None, gene_set=None, additional_data=None, test_split=0.2,
         seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False,
         early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False,
-        task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[]):
+        task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[],
+        covariates=None):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
     n_covariates = covariates.shape[1] if covariates is not None else 0
-    train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, gene_set, additional_data,
-                                                                   covariates, test_split, seed, train_inds,
-                                                                   test_inds, shuffle_labels=shuffle_labels)
+    train_dataset, test_dataset = pnet_loader.generate_train_test(
+        genetic_data, target, gene_set, additional_data, test_split=test_split, seed=seed,
+        train_inds=train_inds, test_inds=test_inds, shuffle_labels=shuffle_labels, covariates=covariates)
     
     reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes(), pathways_to_drop=drop_pathways)
 
@@ -610,16 +611,17 @@ def run(genetic_data, target, save_path=None, gene_set=None, additional_data=Non
 
 
 def run_regulatory(genetic_data, target, save_path='../results/model', gene_set=None, additional_data=None,
-                   covariates=None, test_split=0.2, seed=None, dropout=0.2, input_dropout=0.5, lr=1e-3,
+                   test_split=0.2, seed=None, dropout=0.2, input_dropout=0.5, lr=1e-3,
                    weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True,
                    train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None, loss_fn=None,
-                   loss_weight=None, aux_loss_weights=[25, 2, 7, 20, 54, 148, 400]):
+                   loss_weight=None, aux_loss_weights=[25, 2, 7, 20, 54, 148, 400], covariates=None):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
     n_covariates = covariates.shape[1] if covariates is not None else 0
-    train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, gene_set, additional_data,
-                                                                   covariates, test_split, seed, train_inds, test_inds)
+    train_dataset, test_dataset = pnet_loader.generate_train_test(
+        genetic_data, target, gene_set, additional_data, test_split=test_split, seed=seed,
+        train_inds=train_inds, test_inds=test_inds, covariates=covariates)
     
     reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes())
 
@@ -635,16 +637,17 @@ def run_regulatory(genetic_data, target, save_path='../results/model', gene_set=
 
 
 def run_geneset(genetic_data, target, geneset_path, num_layers=3, sparsity=0.9, save_path='../results/model',
-                genes=None, additional_data=None, covariates=None, test_split=0.2, seed=None, dropout=0.2,
+                genes=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,
                 input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False,
                 early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None,
-                loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400]):
+                loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], covariates=None):
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
     n_covariates = covariates.shape[1] if covariates is not None else 0
-    train_dataset, test_dataset = pnet_loader.generate_train_test(genetic_data, target, genes, additional_data,
-                                                                   covariates, test_split, seed, train_inds, test_inds)
+    train_dataset, test_dataset = pnet_loader.generate_train_test(
+        genetic_data, target, genes, additional_data, test_split=test_split, seed=seed,
+        train_inds=train_inds, test_inds=test_inds, covariates=covariates)
     
     geneset_network = GenesetNetwork.GenesetNetwork(train_dataset.get_genes(), path=geneset_path, num_layers=num_layers, sparsity=sparsity, trim=0)
 

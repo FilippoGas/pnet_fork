@@ -125,9 +125,9 @@ def get_indicies(genetic_data, target, additional_data=None, covariates=None):
     return inds
 
 
-def generate_train_test(genetic_data, target, gene_set=None, additional_data=None, covariates=None,
+def generate_train_test(genetic_data, target, gene_set=None, additional_data=None,
                         test_split=0.3, seed=None, train_inds=None, test_inds=None, collinear_features=0,
-                        shuffle_labels=False):
+                        shuffle_labels=False, covariates=None):
     """
     Takes all data modalities to be used and generates a train and test DataSet with a given split.
     :param genetic_data: Dict(str: pd.DataFrame); requires a dict containing a pd.DataFrame for each data modality
@@ -137,9 +137,10 @@ def generate_train_test(genetic_data, target, gene_set=None, additional_data=Non
     :param gene_set: List(str); List of genes to be considered, default is None and considers all genes found in every
         data modality.
     :param additional_data: pd.DataFrame; Dataframe with additional information per sample. Sample IDs should match
-    :param covariates: pd.DataFrame; Dataframe with covariate information per sample. Sample IDs should match
     :param test_split: float; Fraction of samples to be used for testing.
     :param seed: int; Random seed to be used for train/test splits.
+    :param covariates: pd.DataFrame; Dataframe with covariate information per sample. Sample IDs should match genetic
+        data. If None, covariate correction is disabled.
     :return:
     """
     print('Given {} Input modalities'.format(len(genetic_data)))
@@ -181,11 +182,11 @@ def to_dataloader(train_dataset, test_dataset, batch_size):
 
 def add_collinear(train_dataset, test_dataset, collinear_features):
     if isinstance(collinear_features, list):
-        for f in features:
+        for f in collinear_features:
             replace_collinear(train_dataset, test_dataset, f)
     else:
         for n in range(collinear_features):
-            r = random.randint(0, len(train_dataset.input_df.columns))
+            r = random.randrange(len(train_dataset.input_df.columns))
             altered_input_col = train_dataset.input_df.columns[r]
             train_dataset, test_dataset = replace_collinear(train_dataset, test_dataset, altered_input_col)
     return train_dataset, test_dataset
