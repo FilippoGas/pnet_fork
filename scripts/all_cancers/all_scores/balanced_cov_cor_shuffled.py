@@ -17,6 +17,8 @@ score_type  = sys.argv[2]
 # Paths
 input_dir           = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/pnet_gene/all_cancers/aggregated_scores"
 tumor_types_path    = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_"+tumor_type+".csv"
+cancer_types_path   = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/sample_cancer_type/all_cancers/cancer_type_mc.csv"
+ethnicity_path      = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/TCGA_sample_ethnicity.csv"
 covariates_path     = "/shares/CIBIO-Storage/BCG/scratch/fgastaldello/data/pnet_fork/resources/TCGA_sample_covariates.csv"
 output_dir          = sys.argv[3]
 
@@ -43,6 +45,7 @@ selected_genes = list(scores_hap1.columns)
 
 # Get samples list
 samples = np.array(tumor_types.index.tolist())
+strata = util.load_balance_strata(cancer_types_path, ethnicity_path, samples)
 
 n_splits = 10
 kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
@@ -56,13 +59,16 @@ all_y_true = []
 all_pred_proba = []
 
 for fold, (train_index, test_index) in enumerate(kf.split(samples, tumor_types[tumor_types.columns[0]])):
-    train_sample = util.balance_split(samples[train_index].tolist(), tumor_types)
-    test_sample = util.balance_split(samples[test_index].tolist(), tumor_types)
+    train_sample = util.balance_split(samples[train_index].tolist(), tumor_types,
+                                      strata=strata, random_state=42 + fold)
+    test_sample = util.balance_split(samples[test_index].tolist(), tumor_types,
+                                     strata=strata, random_state=1000 + fold)
 
     model, train_scores, test_scores, train_dataset, test_dataset = Pnet.run(
         genetic_data, tumor_types, covariates=covariates_df, seed=0, dropout=0.2, lr=1e-3, weight_decay=1e-3,
         batch_size=128, epochs=3000, early_stopping=True, train_inds=train_sample,
-        test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes
+        test_inds=test_sample, input_dropout=0.5, gene_set=selected_genes, max_depth=7,
+        l1_lambda=1e-5, group_lambda=1e-4, gene_dropout=0.2
     )
     # Perform evaluation, generate plots and importances csv and save
     plt.clf()
