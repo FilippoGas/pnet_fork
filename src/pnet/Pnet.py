@@ -11,8 +11,22 @@ from torch.optim.lr_scheduler import StepLR
 import numpy as np
 import os
 import warnings
+from typing import Iterable
 import pytorch_lightning as pl
 import captum
+
+
+def _build_optimizer(optimizer_name: str, parameters: Iterable[torch.nn.Parameter], lr: float,
+                     weight_decay: float) -> optim.Optimizer:
+    """
+    Build an Adam or AdamW optimizer from a case-insensitive name.
+    """
+    name = optimizer_name.lower()
+    if name == 'adam':
+        return optim.Adam(parameters, lr=lr, weight_decay=weight_decay)
+    if name == 'adamw':
+        return optim.AdamW(parameters, lr=lr, weight_decay=weight_decay)
+    raise ValueError("optimizer must be 'adam' or 'adamw', got {!r}".format(optimizer_name))
 
 
 class PNET_Block(nn.Module):
@@ -56,7 +70,8 @@ class PNET_NN(pl.LightningModule):
     def __init__(self, reactome_network, task, nbr_gene_inputs=1, output_dim=1, additional_dims=0, lr=1e-3,
                  weight_decay=1e-5, dropout=0.1, gene_dropout=0.1, input_dropout=0.5, activation='tanh', loss_fn=None,
                  random_network=False, fcnn=False, loss_weight=None,
-                 aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False, n_covariates=0):
+                 aux_loss_weights=[2, 7, 20, 54, 148, 400], add_regulatory_layer=False, n_covariates=0,
+                 optimizer='adam', l1_lambda=1e-5, group_lambda=1e-4, aux_loss_scale=0.5):
         super().__init__()
         self.reactome_network = reactome_network
         self.nbr_gene_inputs = nbr_gene_inputs
@@ -69,7 +84,9 @@ class PNET_NN(pl.LightningModule):
         self.input_dropout = input_dropout
         self.task = task
         self.loss_weight = loss_weight
-        self.aux_loss_weights = aux_loss_weights
+        self.l1_lambda = l1_lambda
+        self.group_lambda = group_lambda
+        self.aux_loss_scale = aux_loss_scale
         if loss_fn is None:
             self.loss_fn = util.get_loss_function(task)
         else:
@@ -78,6 +95,7 @@ class PNET_NN(pl.LightningModule):
         self.interpret_flag = False
         self.regulatory_flag = add_regulatory_layer
         self.n_covariates = n_covariates
+        self.optimizer_name = optimizer
         
         # Fetch connection masks from reactome network:
         if self.regulatory_flag:
@@ -103,14 +121,16 @@ class PNET_NN(pl.LightningModule):
         self.input_layer = nn.Sequential(*CustomizedLinear.masked_activation(input_mask, activation=self.activation, batchnorm=True, dropout=self.input_dropout))
         # Add regulatory layer if active
         if self.regulatory_flag:   
-            self.regulatory_layer = Regulatory_Block(regulatory_mask, activation=self.activation, batchnorm=True, dropout=self.dropout)
+            self.regulatory_layer = Regulatory_Block(regulatory_mask, activation=self.activation, batchnorm=True,
+                                                     gene_dropout=self.gene_dropout, dropout=self.dropout)
             self.regulatory_pred = nn.Sequential(*[nn.Linear(in_features=regulatory_mask.shape[0] + self.additional_dims, out_features=self.output_dim)])
             self.num_pred_heads += 1
         # Add first layer separately:
         self.first_gene_layer = nn.Sequential(*CustomizedLinear.masked_activation(gene_masks[0], activation=self.activation, batchnorm=True, dropout=self.gene_dropout))
         # Add blocks and prediction heads for each pathway level:
         for i in range(0, len(gene_masks) - 1):
-            self.layers.append(PNET_Block(gene_masks[i + 1], pathway_masks[i], activation=self.activation, batchnorm=True, dropout=self.dropout))
+            self.layers.append(PNET_Block(gene_masks[i + 1], pathway_masks[i], activation=self.activation, batchnorm=True,
+                                          gene_dropout=self.gene_dropout, dropout=self.dropout))
             self.preds.append(
                 nn.Sequential(*[nn.Linear(in_features=pathway_masks[i].shape[0] + self.additional_dims,
                                           out_features=self.output_dim)]))
@@ -123,6 +143,44 @@ class PNET_NN(pl.LightningModule):
         if self.n_covariates > 0:
             self.covariate_head = nn.Linear(in_features=self.output_dim + self.n_covariates,
                                             out_features=self.output_dim)
+        # Auxiliary head weights aligned to the actual head count and normalized
+        # so the combined auxiliary loss sums to aux_loss_scale (final head weighs 1.0).
+        self.aux_loss_weights = self._finalize_aux_loss_weights(aux_loss_weights)
+
+    def _finalize_aux_loss_weights(self, aux_loss_weights):
+        """
+        Normalize auxiliary prediction-head weights: relative proportions are kept,
+        but the total is fixed at aux_loss_scale and the length always matches the
+        number of prediction heads (noisy zip truncation when depths differ).
+        """
+        n_heads = self.num_pred_heads
+        weights = list(aux_loss_weights) if aux_loss_weights is not None else []
+        if len(weights) != n_heads:
+            warnings.warn('aux_loss_weights has {} entries but the model has {} prediction heads; '
+                          'falling back to geometric weights 1, 2, 4, ...'.format(len(weights), n_heads))
+            weights = [2 ** i for i in range(n_heads)]
+        total = float(sum(weights))
+        if total <= 0:
+            return [0.0] * n_heads
+        return [float(w) / total * self.aux_loss_scale for w in weights]
+
+    def sparsity_penalty(self):
+        """
+        Mask-weighted sparsity penalty over all CustomizedLinear layers.
+        L1 term shrinks individual existing edges; group-lasso term penalizes the
+        column of each input node (gene or pathway), zeroing whole node outputs.
+        Masked-out entries contribute exactly zero, so network topology is preserved.
+        """
+        if self.l1_lambda == 0.0 and self.group_lambda == 0.0:
+            return 0.0
+        penalty = 0.0
+        for module in self.modules():
+            if isinstance(module, CustomizedLinear.CustomizedLinear):
+                active = module.weight.abs() * module.mask
+                penalty = penalty + self.l1_lambda * active.sum()
+                if self.group_lambda > 0.0:
+                    penalty = penalty + self.group_lambda * torch.sqrt(active.pow(2).sum(dim=0) + 1e-12).sum()
+        return penalty
 
     def forward(self, x, additional_data, covariates=None):
         x = self.input_layer(x)
@@ -212,7 +270,7 @@ class PNET_NN(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return _build_optimizer(self.optimizer_name, self.parameters(), self.lr, self.weight_decay)
 
 
     def deepLIFT(self, test_dataset, target_class=0):
@@ -362,7 +420,24 @@ class PNET_NN(pl.LightningModule):
             return gene_feature_importances, additional_feature_importances, gene_importances, layer_importance_scores,
 
 
-def fit(model, dataloader, optimizer):
+def _compute_loss(model, y_hat, y_hats, y):
+    """
+    Supervised loss over the final and all auxiliary heads. Loss functions reduce
+    per sample (reduction='none'), so class weighting and averaging are explicit.
+    """
+    if model.loss_weight is not None:
+        weight_ = model.loss_weight.to(y.device)[y.data.view(-1).long()].view_as(y)
+        final_loss = (model.loss_fn(y_hat, y) * weight_).mean()
+        aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w
+                      for y_h, w in zip(y_hats, model.aux_loss_weights)]
+    else:
+        final_loss = model.loss_fn(y_hat, y).mean()
+        aux_losses = [model.loss_fn(y_h, y).mean() * w
+                      for y_h, w in zip(y_hats, model.aux_loss_weights)]
+    return final_loss + sum(aux_losses)
+
+
+def fit(model, dataloader, optimizer, sparsity_scale=1.0):
     if torch.cuda.is_available():
         device = torch.device('cuda')
     elif torch.backends.mps.is_available():
@@ -371,24 +446,22 @@ def fit(model, dataloader, optimizer):
         device = torch.device('cpu')
     model.train()
     running_loss = 0.0
+    running_sparsity = 0.0
     for batch in dataloader:
         gene_data, additional_data, covariates, y = batch
         gene_data, additional_data, covariates, y = gene_data.to(device, non_blocking=True), additional_data.to(device, non_blocking=True), covariates.to(device, non_blocking=True), y.to(device, non_blocking=True)
         optimizer.zero_grad()
         y_hat, y_hats = model(gene_data, additional_data, covariates)
-        if model.loss_weight is not None:
-            weight = model.loss_weight.to(device, non_blocking = True)
-            weight_ = weight[y.data.view(-1).long()].view_as(y)
-            aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
-        else:
-            aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-            loss = model.loss_fn(y_hat, y) + sum(aux_losses)
-        running_loss += loss.item()
-        loss.backward()
+        loss = _compute_loss(model, y_hat, y_hats, y)
+        penalty = model.sparsity_penalty() * sparsity_scale if sparsity_scale else 0.0
+        (loss + penalty).backward()
         optimizer.step()
+        running_loss += loss.item()
+        if isinstance(penalty, torch.Tensor):
+            running_sparsity += penalty.item()
     train_loss = running_loss/len(dataloader.dataset)
-    return train_loss
+    sparsity_mean = running_sparsity/max(1, len(dataloader))
+    return train_loss, sparsity_mean
 
 
 def validate(model, dataloader):
@@ -405,21 +478,14 @@ def validate(model, dataloader):
             gene_data, additional_data, covariates, y = batch
             gene_data, additional_data, covariates, y = gene_data.to(device, non_blocking=True), additional_data.to(device, non_blocking=True), covariates.to(device, non_blocking=True), y.to(device, non_blocking=True)
             y_hat, y_hats = model(gene_data, additional_data, covariates)
-            if model.loss_weight is not None:
-                weight = model.loss_weight.to(device, non_blocking = True)
-                weight_ = weight[y.data.view(-1).long()].view_as(y)
-                aux_losses = [(model.loss_fn(y_h, y) * weight_).mean() * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-                loss = (model.loss_fn(y_hat, y) * weight_).mean() + sum(aux_losses)
-            else:
-                aux_losses = [model.loss_fn(y_h, y) * w for y_h, w in zip(y_hats, model.aux_loss_weights)]
-                loss = model.loss_fn(y_hat, y) + sum(aux_losses)
+            loss = _compute_loss(model, y_hat, y_hats, y)
             running_loss += loss.item()
     loss = running_loss / len(dataloader.dataset)
     return loss
 
 
 def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_decay=1e-4, epochs=300, verbose=False,
-          early_stopping=True, lr_scheduler=False):
+          early_stopping=True, lr_scheduler=False, optimizer='adam', sparsity_warmup=50, sparsity_ramp=150):
     if torch.cuda.is_available():
         device = torch.device('cuda')
         print('We are sending to cuda')
@@ -428,8 +494,8 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
     else:
         device = torch.device('cpu')
     model = model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = StepLR(optimizer, step_size=30, gamma=lr)
+    optimizer = _build_optimizer(optimizer, model.parameters(), lr, weight_decay)
+    scheduler = StepLR(optimizer, step_size=30, gamma=0.1)
     
     # The EarlyStopper needs a path to save the best model.
     # If no save_path is provided, we won't use early stopping's model saving feature.
@@ -452,7 +518,14 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
     train_scores = []
     test_scores = []
     for epoch in range(epochs):
-        train_epoch_loss = fit(model, train_loader, optimizer)
+        # Linearly ramp the sparsity penalty from 0 to 1 after a supervised warmup.
+        if epoch < sparsity_warmup:
+            sparsity_scale = 0.0
+        elif sparsity_ramp <= 0:
+            sparsity_scale = 1.0
+        else:
+            sparsity_scale = min(1.0, (epoch - sparsity_warmup + 1) / sparsity_ramp)
+        train_epoch_loss, sparsity_term = fit(model, train_loader, optimizer, sparsity_scale=sparsity_scale)
         test_epoch_loss = validate(model, test_loader)
         train_scores.append(train_epoch_loss)
         test_scores.append(test_epoch_loss)
@@ -462,6 +535,8 @@ def train(model, train_loader, test_loader, save_path=None, lr=0.5e-3, weight_de
             print(f"Epoch {epoch + 1} of {epochs}")
             print("Train Loss: {}".format(train_epoch_loss))
             print("Test Loss: {}".format(test_epoch_loss))
+            if sparsity_scale:
+                print("Sparsity Penalty: {}".format(sparsity_term))
         if early_stopping:
             if early_stopper.early_stop(test_epoch_loss, model):
                 print('Hit early stopping criteria')
@@ -586,7 +661,11 @@ def run(genetic_data, target, save_path=None, gene_set=None, additional_data=Non
         seed=None, dropout=0.2,input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False,
         early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, shuffle_labels=False,
         task=None, loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], drop_pathways=[],
-        covariates=None):
+        covariates=None, max_depth=6, trim=0, gene_dropout=0.1, optimizer='adam', num_workers=8,
+        l1_lambda=1e-5, group_lambda=1e-4, aux_loss_scale=0.5, sparsity_warmup=50, sparsity_ramp=150):
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
@@ -595,17 +674,20 @@ def run(genetic_data, target, save_path=None, gene_set=None, additional_data=Non
         genetic_data, target, gene_set, additional_data, test_split=test_split, seed=seed,
         train_inds=train_inds, test_inds=test_inds, shuffle_labels=shuffle_labels, covariates=covariates)
     
-    reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes(), pathways_to_drop=drop_pathways)
+    reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes(), pathways_to_drop=drop_pathways,
+                                                       max_depth=max_depth, trim=trim)
 
     model = PNET_NN(reactome_network=reactome_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn,
-                    loss_weight=loss_weight, input_dropout=input_dropout, aux_loss_weights=aux_loss_weights,
-                    n_covariates=n_covariates
+                    loss_weight=loss_weight, input_dropout=input_dropout, gene_dropout=gene_dropout,
+                    aux_loss_weights=aux_loss_weights, n_covariates=n_covariates, optimizer=optimizer,
+                    l1_lambda=l1_lambda, group_lambda=group_lambda, aux_loss_scale=aux_loss_scale
                     )
-    train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
+    train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size, num_workers=num_workers)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
-                                             early_stopping)
+                                             early_stopping, optimizer=optimizer,
+                                             sparsity_warmup=sparsity_warmup, sparsity_ramp=sparsity_ramp)
 
     return model, train_scores, test_scores, train_dataset, test_dataset
 
@@ -614,7 +696,12 @@ def run_regulatory(genetic_data, target, save_path='../results/model', gene_set=
                    test_split=0.2, seed=None, dropout=0.2, input_dropout=0.5, lr=1e-3,
                    weight_decay=1e-3, batch_size=64, epochs=400, verbose=False, early_stopping=True,
                    train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None, loss_fn=None,
-                   loss_weight=None, aux_loss_weights=[25, 2, 7, 20, 54, 148, 400], covariates=None):
+                   loss_weight=None, aux_loss_weights=[25, 2, 7, 20, 54, 148, 400], covariates=None,
+                   max_depth=6, trim=0, gene_dropout=0.1, optimizer='adam', num_workers=8,
+                   l1_lambda=1e-5, group_lambda=1e-4, aux_loss_scale=0.5, sparsity_warmup=50, sparsity_ramp=150):
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
@@ -623,16 +710,20 @@ def run_regulatory(genetic_data, target, save_path='../results/model', gene_set=
         genetic_data, target, gene_set, additional_data, test_split=test_split, seed=seed,
         train_inds=train_inds, test_inds=test_inds, covariates=covariates)
     
-    reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes())
+    reactome_network = ReactomeNetwork.ReactomeNetwork(train_dataset.get_genes(), max_depth=max_depth, trim=trim)
 
     model = PNET_NN(reactome_network=reactome_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn,
-                    loss_weight=loss_weight, input_dropout=input_dropout, aux_loss_weights=aux_loss_weights,
-                    add_regulatory_layer=True, n_covariates=n_covariates
+                    loss_weight=loss_weight, input_dropout=input_dropout, gene_dropout=gene_dropout,
+                    aux_loss_weights=aux_loss_weights, add_regulatory_layer=True, n_covariates=n_covariates,
+                    optimizer=optimizer, l1_lambda=l1_lambda, group_lambda=group_lambda,
+                    aux_loss_scale=aux_loss_scale
                     )
-    train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
-    model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose, early_stopping)
+    train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size, num_workers=num_workers)
+    model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
+                                             early_stopping, optimizer=optimizer,
+                                             sparsity_warmup=sparsity_warmup, sparsity_ramp=sparsity_ramp)
     return model, train_scores, test_scores, train_dataset, test_dataset
 
 
@@ -640,7 +731,12 @@ def run_geneset(genetic_data, target, geneset_path, num_layers=3, sparsity=0.9, 
                 genes=None, additional_data=None, test_split=0.2, seed=None, dropout=0.2,
                 input_dropout=0.5, lr=1e-3, weight_decay=1e-3, batch_size=64, epochs=400, verbose=False,
                 early_stopping=True, train_inds=None, test_inds=None, random_network=False, fcnn=False, task=None,
-                loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], covariates=None):
+                loss_fn=None, loss_weight=None, aux_loss_weights=[2, 7, 20, 54, 148, 400], covariates=None,
+                gene_dropout=0.1, optimizer='adam', num_workers=8,
+                l1_lambda=1e-5, group_lambda=1e-4, aux_loss_scale=0.5, sparsity_warmup=50, sparsity_ramp=150):
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
     if task is None:
         task = util.get_task(target)
     target = util.format_target(target, task)
@@ -654,12 +750,14 @@ def run_geneset(genetic_data, target, geneset_path, num_layers=3, sparsity=0.9, 
     model = PNET_NN(reactome_network=geneset_network, task=task, nbr_gene_inputs=len(genetic_data), dropout=dropout,
                     additional_dims=train_dataset.additional_data.shape[1], lr=lr, weight_decay=weight_decay,
                     output_dim=target.shape[1], random_network=random_network, fcnn=fcnn, loss_fn=loss_fn,
-                    loss_weight=loss_weight, input_dropout=input_dropout, aux_loss_weights=aux_loss_weights,
-                    n_covariates=n_covariates
+                    loss_weight=loss_weight, input_dropout=input_dropout, gene_dropout=gene_dropout,
+                    aux_loss_weights=aux_loss_weights, n_covariates=n_covariates, optimizer=optimizer,
+                    l1_lambda=l1_lambda, group_lambda=group_lambda, aux_loss_scale=aux_loss_scale
                     )
-    train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size)
+    train_loader, test_loader = pnet_loader.to_dataloader(train_dataset, test_dataset, batch_size, num_workers=num_workers)
     model, train_scores, test_scores = train(model, train_loader, test_loader, save_path, lr, weight_decay, epochs, verbose,
-                                             early_stopping)
+                                             early_stopping, optimizer=optimizer,
+                                             sparsity_warmup=sparsity_warmup, sparsity_ramp=sparsity_ramp)
 
     return model, train_scores, test_scores, train_dataset, test_dataset
 

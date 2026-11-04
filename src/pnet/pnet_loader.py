@@ -175,9 +175,16 @@ def generate_train_test(genetic_data, target, gene_set=None, additional_data=Non
     return train_dataset, test_dataset
 
 
-def to_dataloader(train_dataset, test_dataset, batch_size):
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory = True, prefetch_factor=2, persistent_workers=True, drop_last=True)
-    val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory = True, prefetch_factor=2, persistent_workers=True)
+def to_dataloader(train_dataset, test_dataset, batch_size, num_workers=8):
+    loader_kwargs = {
+        'num_workers': num_workers,
+        'pin_memory': True,
+        'persistent_workers': num_workers > 0,
+    }
+    if num_workers > 0:
+        loader_kwargs['prefetch_factor'] = 2
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, **loader_kwargs)
+    val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, **loader_kwargs)
     return train_loader, val_loader
 
 def add_collinear(train_dataset, test_dataset, collinear_features):
