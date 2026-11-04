@@ -593,35 +593,161 @@ def BCELoss_class_weighted(weights):
 
 def get_loss_function(task):
     if task == 'BC':
-        loss_function = nn.BCEWithLogitsLoss(reduction='sum')
+        loss_function = nn.BCEWithLogitsLoss(reduction='none')
     elif task == 'MC':
-        loss_function = nn.CrossEntropyLoss(reduction='sum')
+        loss_function = nn.CrossEntropyLoss(reduction='none')
     else:
-        loss_function = nn.MSELoss(reduction='sum')
+        loss_function = nn.MSELoss(reduction='none')
     print('Loss function used: {}'.format(loss_function))
     return loss_function
 
 
-def balance_split(sample_list, labels, minority_class=1):
+def _apportion(total, sizes):
     """
-    Balance classes in a sample list by subsampling the majority class.
-    
+    Allocate an integer total across groups proportionally to their sizes.
+
+    Uses the largest-remainder (Hamilton) method: each group first receives the
+    integer part of its proportional quota, then leftover seats go to the groups
+    with the largest fractional remainders. This preserves the requested total
+    and approximates the original proportions as closely as integer counts allow.
+
+    :param total: int; Number of samples to allocate
+    :param sizes: pd.Series; Available sample count per group, indexed by group
+    :return: pd.Series(int); Allocated count per group
+    """
+    sizes = sizes.astype(int)
+    # Never request more samples than are available across all groups.
+    total = int(min(total, sizes.sum()))
+    allocation = pd.Series(0, index=sizes.index, dtype=int)
+    if total <= 0:
+        return allocation
+
+    # Compute exact quotas and start with their integer parts.
+    quotas = sizes * (total / sizes.sum())
+    allocation = np.floor(quotas).astype(int)
+    remainder = total - int(allocation.sum())
+    # Assign remaining seats to the largest fractional quotas.
+    if remainder > 0:
+        fractions = (quotas - allocation).sort_values(ascending=False)
+        allocation.loc[fractions.index[:remainder]] += 1
+    return allocation
+
+
+def _hierarchical_allocation(strata, total):
+    """
+    Allocate a total across nested strata, one column at a time.
+
+    The first column is allocated proportionally first (for example ethnicity),
+    then each group's allocation is distributed across the next column (for
+    example cancer type). Allocating the primary dimension first keeps its
+    marginal proportions stable even when there are more secondary strata than
+    available samples.
+
+    :param strata: pd.DataFrame; Sample-level stratum columns in priority order
+    :param total: int; Number of samples to allocate
+    :return: dict(tuple -> int); Allocated count per full stratum tuple
+    """
+    columns = list(strata.columns)
+    if not columns:
+        return {(): int(total)}
+
+    primary = columns[0]
+    # sort=False keeps a deterministic first-seen group order.
+    primary_allocation = _apportion(total, strata[primary].value_counts(sort=False))
+    allocation = {}
+    for primary_value, count in primary_allocation.items():
+        if count <= 0:
+            continue
+        # Distribute this primary group's quota across the remaining columns.
+        subset = strata.loc[strata[primary] == primary_value, columns[1:]]
+        if not columns[1:]:
+            allocation[(primary_value,)] = int(count)
+        else:
+            for key, sub_count in _hierarchical_allocation(subset, int(count)).items():
+                allocation[(primary_value,) + key] = sub_count
+    return allocation
+
+
+def load_balance_strata(cancer_type_path, ethnicity_path, samples):
+    """
+    Build the sample-level strata used by balance_split.
+
+    Cancer type and inferred ethnicity are aligned to the requested sample order.
+    Samples absent from either metadata file are labelled 'Unknown' so they stay
+    in the balancing pool instead of being silently dropped.
+
+    :param cancer_type_path: str; CSV with 'sample' and cancer-type columns
+    :param ethnicity_path: str; CSV with 'sample' and inferred-ethnicity columns
+    :param samples: list(str) or np.ndarray; Sample names to align to
+    :return: pd.DataFrame; Indexed by sample with columns ['ethnicity', 'tumor_type']
+    """
+    cancer_types = pd.read_csv(cancer_type_path, sep=',').dropna().set_index('sample').iloc[:, 0]
+    ethnicity = pd.read_csv(ethnicity_path, sep=',').dropna().set_index('sample').iloc[:, 0]
+    return pd.DataFrame({
+        'ethnicity': ethnicity.reindex(samples).fillna('Unknown'),
+        'tumor_type': cancer_types.reindex(samples).fillna('Unknown')
+    }, index=samples)
+
+
+def balance_split(sample_list, labels, minority_class=1, strata=None, random_state=None):
+    """
+    Balance classes by keeping all minority samples and subsampling the majority.
+
+    When strata is None, majority samples are drawn uniformly at random. When
+    strata is provided, majority samples are allocated hierarchically in column
+    order: the first column gets proportional quotas (for example ethnicity),
+    then within each group the next column is allocated proportionally (for
+    example cancer type). This keeps the sampled negative-class composition
+    stable even when the majority pool contains many small groups.
+
     :param sample_list: list(str); List of sample names in the split
     :param labels: pd.DataFrame; DataFrame with labels indexed by sample name
     :param minority_class: int; Label of minority class to preserve (default=1)
+    :param strata: pd.DataFrame or pd.Series; Optional sample-level strata. DataFrame columns are allocated hierarchically in order.
+    :param random_state: int or None; Seed for within-stratum sampling
     :return: list(str); Balanced list of samples
     """
     labels_in_split = labels.loc[sample_list]
     labels_array = labels_in_split.values.flatten()
-    
+
+    # Separate the class kept in full from the majority pool to subsample.
     minority_mask = labels_array == minority_class
     minority_samples = [s for s, m in zip(sample_list, minority_mask) if m]
     majority_samples = [s for s, m in zip(sample_list, minority_mask) if not m]
-    
-    n_to_sample = len(minority_samples)
-    sampled_majority = np.random.choice(majority_samples, size=n_to_sample, replace=False)
-    
-    return minority_samples + list(sampled_majority)
+
+    # Match the majority sample size to the minority size, capped by availability.
+    n_to_sample = min(len(minority_samples), len(majority_samples))
+    if n_to_sample == 0:
+        return minority_samples
+
+    rng = np.random.default_rng(random_state)
+    # Preserve the original uniform sampling behavior when no strata are given.
+    if strata is None:
+        sampled_majority = rng.choice(majority_samples, size=n_to_sample, replace=False)
+        return minority_samples + list(sampled_majority)
+
+    # A Series represents a single stratification dimension.
+    if isinstance(strata, pd.Series):
+        strata = strata.to_frame()
+    if strata.shape[1] == 0:
+        sampled_majority = rng.choice(majority_samples, size=n_to_sample, replace=False)
+        return minority_samples + list(sampled_majority)
+
+    # Reindex to the majority pool and keep missing metadata as its own stratum.
+    strata_in_split = strata.reindex(majority_samples).fillna('Unknown')
+    allocation = _hierarchical_allocation(strata_in_split, n_to_sample)
+
+    # Allocate counts per full stratum, then sample without replacement inside it.
+    sampled_majority = []
+    grouped = strata_in_split.groupby(list(strata_in_split.columns), sort=False, dropna=False)
+    for key, group in grouped:
+        # groupby returns a scalar for one column and a tuple for multiple columns.
+        key = key if isinstance(key, tuple) else (key,)
+        count = allocation.get(key, 0)
+        if count > 0:
+            sampled_majority.extend(rng.choice(group.index.to_numpy(), size=count, replace=False).tolist())
+
+    return minority_samples + sampled_majority
 
 
 class EarlyStopper:
